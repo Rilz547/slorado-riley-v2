@@ -68,3 +68,4 @@ test/slorado*
 *.bedmethyl
 *.pdf
 *.temp*
+test/PGXXXX230339/reads_20k.blow5

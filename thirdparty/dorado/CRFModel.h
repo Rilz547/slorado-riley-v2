@@ -6,10 +6,12 @@
 #include <vector>
 
 #include "model_config.h"
+#include "slorado.h"
+#include "misc.h"
 
 using namespace torch::nn;
 
-ModuleHolder<AnyModule> load_lstm_model(const CRFModelConfig &model_config, const torch::TensorOptions &options);
+ModuleHolder<AnyModule> load_lstm_model(const CRFModelConfig &model_config, const torch::TensorOptions &options, lstm_stats_t *model_stats);
 
 struct ConvStackImpl : torch::nn::Module {
     explicit ConvStackImpl(const std::vector<ConvParams> &layer_params);
@@ -55,7 +57,7 @@ TORCH_MODULE(ConvStack);
 TORCH_MODULE(Clamp);
 
 struct CRFModelImpl : torch::nn::Module {
-    explicit CRFModelImpl(const CRFModelConfig &config);
+    explicit CRFModelImpl(const CRFModelConfig &config, lstm_stats_t *model_stats);
     void load_state_dict(const std::vector<torch::Tensor> &weights);
 
     torch::Tensor forward(const torch::Tensor &x);
@@ -64,6 +66,9 @@ struct CRFModelImpl : torch::nn::Module {
     LinearCRF linear1{nullptr}, linear2{nullptr};
     Clamp clamp1{nullptr};
     torch::nn::Sequential encoder{nullptr};
+    lstm_stats_t *model_stats{nullptr};
+    bool has_linear2{false};
+    bool has_clamp{false};
 };
 
 TORCH_MODULE(CRFModel);

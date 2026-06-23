@@ -4,6 +4,11 @@
 #include "CRFModel.h"
 #include "error.h"
 #include "tensor_chunk_utils.h"
+#include "misc.h"
+
+#ifdef USE_GPU
+#include <c10/cuda/CUDAStream.h>
+#endif
 
 using namespace torch::nn;
 
@@ -85,7 +90,7 @@ torch::Tensor ClampImpl::forward(torch::Tensor x) {
     return x;
 }
 
-CRFModelImpl::CRFModelImpl(const CRFModelConfig &config) {
+CRFModelImpl::CRFModelImpl(const CRFModelConfig &config, lstm_stats_t *stats) : model_stats(stats) {
     const auto cv = config.convs;
     const auto lstm_size = config.lstm_size;
     convs = register_module("convs", ConvStack(cv));
@@ -97,11 +102,14 @@ CRFModelImpl::CRFModelImpl(const CRFModelConfig &config) {
         linear1 = register_module("linear1", LinearCRF(lstm_size, decomposition, true, false));
         linear2 = register_module("linear2", LinearCRF(decomposition, config.outsize, false, false));
         clamp1 = Clamp(-5.0, 5.0, config.clamp);
+        has_linear2 = true;
+        has_clamp = true;
         encoder = Sequential(convs, rnns, linear1, linear2, clamp1);
     } else if ((config.convs[0].size > 4) && (config.num_features == 1)) {
         // v4.x model without linear decomposition
         linear1 = register_module("linear1", LinearCRF(lstm_size, config.outsize, false, false));
         clamp1 = Clamp(-5.0, 5.0, config.clamp);
+        has_clamp = true;
         encoder = Sequential(convs, rnns, linear1, clamp1);
     } else {
         // Pre v4 model
@@ -115,8 +123,45 @@ void CRFModelImpl::load_state_dict(const std::vector<torch::Tensor> &weights) {
 }
 
 torch::Tensor CRFModelImpl::forward(const torch::Tensor &x) {
+    torch::Tensor h;
+    double a, b;
+
+    a = realtime();
+    h = convs->forward(x);
+    if (!x.device().is_cpu()) torch::cuda::synchronize(x.device().index());
+    b = realtime();
+    if (model_stats) model_stats->time_conv_stack += b - a;
+
+    a = realtime();
+    h = rnns->forward(h);
+    if (!x.device().is_cpu()) torch::cuda::synchronize(x.device().index());
+    b = realtime();
+    if (model_stats) model_stats->time_rnns += b - a;
+
+    a = realtime();
+    h = linear1->forward(h);
+    if (!x.device().is_cpu()) torch::cuda::synchronize(x.device().index());
+    b = realtime();
+    if (model_stats) model_stats->time_crf_1 += b - a;
+
+    if (has_linear2) {
+        a = realtime();
+        h = linear2->forward(h);
+        if (!x.device().is_cpu()) torch::cuda::synchronize(x.device().index());
+        b = realtime();
+        if (model_stats) model_stats->time_crf_2 += b - a;
+    }
+
+    if (has_clamp) {
+        a = realtime();
+        h = clamp1->forward(h);
+        if (!x.device().is_cpu()) torch::cuda::synchronize(x.device().index());
+        b = realtime();
+        if (model_stats) model_stats->time_clamp += b - a;
+    }
+
     // Output is [N, T, C]
-    return encoder->forward(x);
+    return h;
 }
 
 std::vector<torch::Tensor> load_lstm_model_weights(const std::string &dir,
@@ -158,8 +203,8 @@ std::vector<torch::Tensor> load_lstm_model_weights(const std::string &dir,
     return load_tensors(dir, tensors);
 }
 
-ModuleHolder<AnyModule> load_lstm_model(const CRFModelConfig &model_config, const torch::TensorOptions &options) {
-    auto model = CRFModel(model_config);
+ModuleHolder<AnyModule> load_lstm_model(const CRFModelConfig &model_config, const torch::TensorOptions &options, lstm_stats_t *model_stats) {
+    auto model = CRFModel(model_config, model_stats);
     auto state_dict = load_lstm_model_weights(model_config.model_path, model_config.has_out_features, model_config.bias);
     model->load_state_dict(state_dict);
     model->to(options.dtype().toScalarType());
