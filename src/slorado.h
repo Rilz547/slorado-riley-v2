@@ -30,6 +30,13 @@ SOFTWARE.
 
 ******************************************************************************/
 
+/** Riley Updates (Remove at the end)
+ * @file slorado.h
+ * @lastmodified: Added MAX_LSTM_LAYERS. Added rnn array to lstm_stats_t struct.
+ * @lastpatched: 2026-06-24
+
+******************************************************************************/
+
 #ifndef SLORADO_H
 #define SLORADO_H
 
@@ -142,9 +149,13 @@ typedef struct {
     int64_t total_reads; // total number mapped entries in the bam file (after filtering based on flags, mapq etc)
 } db_t;
 
+// 8 cause there might be some hidden layers and also to support headroom if future model has more (also to not make struct huge)
+#define MAX_LSTM_LAYERS 8
+
 typedef struct {
     double time_conv_stack;
     double time_rnns;
+    double time_rnn[MAX_LSTM_LAYERS];
     double time_crf_1;
     double time_crf_2;
     double time_clamp;

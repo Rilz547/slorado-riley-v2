@@ -1,3 +1,10 @@
+/** Riley Updates (Remove at the end)
+ * @file CRFModel.cpp
+ * @lastmodified: Replaced LSTM stack with synchronised timings for each rnn layer.
+ * @lastpatched: 2026-06-24
+
+******************************************************************************/
+
 #include <math.h>
 #include <string>
 
@@ -61,10 +68,11 @@ torch::Tensor LinearCRFImpl::forward(const torch::Tensor &x) {
     return scores;
 }
 
-LSTMStackImpl::LSTMStackImpl(int num_layers, int size) : layer_size(size) {
+LSTMStackImpl::LSTMStackImpl(int num_layers_, int size, lstm_stats_t *stats)
+        : layer_size(size), num_layers(num_layers_), model_stats(stats) {
     // torch::nn::LSTM expects/produces [N, T, C] with batch_first == true
     const auto lstm_opts = LSTMOptions(size, size).batch_first(true);
-    for (int i = 0; i < num_layers; ++i) {
+    for (int i = 0; i < num_layers_; ++i) {
         auto label = std::string("rnn") + std::to_string(i + 1);
         rnns.emplace_back(register_module(label, LSTM(lstm_opts)));
     }
@@ -72,8 +80,15 @@ LSTMStackImpl::LSTMStackImpl(int num_layers, int size) : layer_size(size) {
 
 torch::Tensor LSTMStackImpl::forward(torch::Tensor x) {
     // Input is [N, T, C], contiguity optional
-    for (auto &rnn : rnns) {
-        x = std::get<0>(rnn(x.flip(1)));
+    for (size_t i = 0; i < rnns.size(); ++i) {
+        double a = realtime();
+        x = std::get<0>(rnns[i](x.flip(1)));
+        if (x.device().is_cpu() == false) torch::cuda::synchronize(x.device().index());
+        double b = realtime();
+        if (model_stats && i < MAX_LSTM_LAYERS) {
+            model_stats->time_rnn[i] += b - a;
+            model_stats->time_rnns += b - a;
+        }
     }
 
     // Output is [N, T, C], contiguous
@@ -94,7 +109,7 @@ CRFModelImpl::CRFModelImpl(const CRFModelConfig &config, lstm_stats_t *stats) : 
     const auto cv = config.convs;
     const auto lstm_size = config.lstm_size;
     convs = register_module("convs", ConvStack(cv));
-    rnns = register_module("rnns", LSTMStack(5, lstm_size));
+    rnns = register_module("rnns", LSTMStack(5, lstm_size, model_stats));
 
     if (config.has_out_features) {
         // The linear layer is decomposed into 2 matmuls.
@@ -122,6 +137,7 @@ void CRFModelImpl::load_state_dict(const std::vector<torch::Tensor> &weights) {
     module_load_state_dict(*this, weights);
 }
 
+// Moved logic into LSTMStackImpl to get individual layer timings.
 torch::Tensor CRFModelImpl::forward(const torch::Tensor &x) {
     torch::Tensor h;
     double a, b;
@@ -132,11 +148,7 @@ torch::Tensor CRFModelImpl::forward(const torch::Tensor &x) {
     b = realtime();
     if (model_stats) model_stats->time_conv_stack += b - a;
 
-    a = realtime();
     h = rnns->forward(h);
-    if (!x.device().is_cpu()) torch::cuda::synchronize(x.device().index());
-    b = realtime();
-    if (model_stats) model_stats->time_rnns += b - a;
 
     a = realtime();
     h = linear1->forward(h);

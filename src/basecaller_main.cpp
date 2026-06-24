@@ -30,6 +30,14 @@ SOFTWARE.
 
 ******************************************************************************/
 
+
+/** Riley Updates (Remove at the end)
+ * @file basecaller_main.cpp
+ * @lastmodified: Added LSRNN layer times
+ * @lastpatched: 2026-06-24
+
+******************************************************************************/
+
 #include <getopt.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -335,6 +343,12 @@ int basecaller_main(int argc, char* argv[]) {
             lstm_stats_t *model_stats = (lstm_stats_t *)runner_stats[i]->model_stats;
             fprintf(stderr, "\n[%s]                     - conv_stack: %.3f sec", __func__, model_stats->time_conv_stack);
             fprintf(stderr, "\n[%s]                     - rnns: %.3f sec", __func__, model_stats->time_rnns);
+            // for (int r = 0; r < MAX_LSTM_LAYERS && model_stats->time_rnn[r] > 0.0; ++r) {
+            // Individual RNN layer times
+            for (int r = 0; r < MAX_LSTM_LAYERS; ++r) {
+                fprintf(stderr, "\n[%s]                         - rnn[%d] (%s): %.3f sec", __func__, r,
+                        (r % 2 == 0) ? "reverse" : "forward", model_stats->time_rnn[r]);
+            }
             fprintf(stderr, "\n[%s]                     - crf_1: %.3f sec", __func__, model_stats->time_crf_1);
             fprintf(stderr, "\n[%s]                     - crf_2: %.3f sec", __func__, model_stats->time_crf_2);
             fprintf(stderr, "\n[%s]                     - clamp: %.3f sec", __func__, model_stats->time_clamp);

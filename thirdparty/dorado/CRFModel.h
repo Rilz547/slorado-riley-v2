@@ -1,3 +1,10 @@
+/** Riley Updates (Remove at the end)
+ * @file CRFModel.h
+ * @lastmodified: Added LSTMStackImpl to get individual layer timings.
+ * @lastpatched: 2026-06-24
+
+******************************************************************************/
+
 #ifndef CRF_MODEL_H
 #define CRF_MODEL_H
 
@@ -38,9 +45,11 @@ struct LinearCRFImpl : torch::nn::Module {
 };
 
 struct LSTMStackImpl : torch::nn::Module {
-    LSTMStackImpl(int num_layers, int size);
+    LSTMStackImpl(int num_layers, int size, lstm_stats_t *model_stats);
     torch::Tensor forward(torch::Tensor x);
     int layer_size;
+    int num_layers;
+    lstm_stats_t *model_stats{nullptr};
     std::vector<torch::nn::LSTM> rnns;
 };
 
