@@ -1,7 +1,7 @@
 /** Riley Updates (Remove at the end)
  * @file CRFModel.cpp
- * @lastmodified: Replaced LSTM stack with synchronised timings for each rnn layer.
- * @lastpatched: 2026-06-24
+ * @lastmodified: Added even more model stats.
+ * @lastpatched: 2026-07-01
 
 ******************************************************************************/
 
@@ -19,7 +19,8 @@
 
 using namespace torch::nn;
 
-ConvStackImpl::ConvStackImpl(const std::vector<ConvParams> &layer_params) {
+ConvStackImpl::ConvStackImpl(const std::vector<ConvParams> &layer_params, lstm_stats_t *stats)
+        : model_stats(stats) {
     for (size_t i = 0; i < layer_params.size(); ++i) {
         layers.emplace_back(layer_params[i]);
         auto &layer = layers.back();
@@ -32,7 +33,12 @@ ConvStackImpl::ConvStackImpl(const std::vector<ConvParams> &layer_params) {
 
 torch::Tensor ConvStackImpl::forward(torch::Tensor x) {
     // Input x is [N, C_in, T_in], contiguity optional
-    for (auto &layer : layers) {
+    const bool on_gpu = !x.device().is_cpu();
+    const auto dev_idx = x.device().index();
+
+    for (size_t i = 0; i < layers.size(); ++i) {
+        auto &layer = layers[i];
+        double a = realtime();
         x = layer.conv(x);
         if (layer.params.activation == Activation::SWISH) {
             torch::silu_(x);
@@ -43,9 +49,30 @@ torch::Tensor ConvStackImpl::forward(torch::Tensor x) {
         } else {
             ERROR("%s", "Unrecognised activation function id.");
         }
+        if (on_gpu) torch::cuda::synchronize(dev_idx);
+        double b = realtime();
+        if (model_stats && i < MAX_CONV_LAYERS) {
+            if (model_stats->conv_n[i] == 0) {
+                model_stats->conv_n[i] = x.size(0);
+                model_stats->conv_c[i] = x.size(1);
+                model_stats->conv_t[i] = x.size(2);
+            }
+            model_stats->time_conv[i] += b - a;
+            model_stats->time_conv_stack += b - a;
+        }
     }
+
+    double a = realtime();
+    x = x.transpose(1, 2);
+    if (on_gpu) torch::cuda::synchronize(dev_idx);
+    double b = realtime();
+    if (model_stats) {
+        model_stats->time_conv_transpose += b - a;
+        model_stats->time_conv_stack += b - a;
+    }
+
     // Output is [N, T_out, C_out], non-contiguous
-    return x.transpose(1, 2);
+    return x;
 }
 
 ConvStackImpl::ConvLayer::ConvLayer(const ConvParams &conv_params) : params(conv_params) {}
@@ -80,14 +107,30 @@ LSTMStackImpl::LSTMStackImpl(int num_layers_, int size, lstm_stats_t *stats)
 
 torch::Tensor LSTMStackImpl::forward(torch::Tensor x) {
     // Input is [N, T, C], contiguity optional
+    const bool on_gpu = !x.device().is_cpu();
+    const auto dev_idx = x.device().index();
+
     for (size_t i = 0; i < rnns.size(); ++i) {
         double a = realtime();
-        x = std::get<0>(rnns[i](x.flip(1)));
-        if (x.device().is_cpu() == false) torch::cuda::synchronize(x.device().index());
+        auto flipped = x.flip(1);
+        if (on_gpu) torch::cuda::synchronize(dev_idx);
         double b = realtime();
+
+        double a2 = realtime();
+        x = std::get<0>(rnns[i](flipped));
+        if (on_gpu) torch::cuda::synchronize(dev_idx);
+        double b2 = realtime();
+
         if (model_stats && i < MAX_LSTM_LAYERS) {
-            model_stats->time_rnn[i] += b - a;
-            model_stats->time_rnns += b - a;
+            if (model_stats->rnn_n[i] == 0) {
+                model_stats->rnn_n[i] = x.size(0);
+                model_stats->rnn_t[i] = x.size(1);
+                model_stats->rnn_c[i] = x.size(2);
+            }
+            model_stats->time_rnn_flip[i] += b - a;
+            model_stats->time_rnn_lstm[i] += b2 - a2;
+            model_stats->time_rnn[i] += (b - a) + (b2 - a2);
+            model_stats->time_rnns += (b - a) + (b2 - a2);
         }
     }
 
@@ -108,7 +151,7 @@ torch::Tensor ClampImpl::forward(torch::Tensor x) {
 CRFModelImpl::CRFModelImpl(const CRFModelConfig &config, lstm_stats_t *stats) : model_stats(stats) {
     const auto cv = config.convs;
     const auto lstm_size = config.lstm_size;
-    convs = register_module("convs", ConvStack(cv));
+    convs = register_module("convs", ConvStack(cv, model_stats));
     rnns = register_module("rnns", LSTMStack(5, lstm_size, model_stats));
 
     if (config.has_out_features) {
@@ -142,11 +185,7 @@ torch::Tensor CRFModelImpl::forward(const torch::Tensor &x) {
     torch::Tensor h;
     double a, b;
 
-    a = realtime();
     h = convs->forward(x);
-    if (!x.device().is_cpu()) torch::cuda::synchronize(x.device().index());
-    b = realtime();
-    if (model_stats) model_stats->time_conv_stack += b - a;
 
     h = rnns->forward(h);
 

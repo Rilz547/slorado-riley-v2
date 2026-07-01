@@ -103,7 +103,7 @@ core_t* init_core(char *slow5file, opt_t opt, char *model, double realtime0) {
     core->model_stride = static_cast<size_t>(model_config.stride);
     core->chunk_size = opt.chunk_size - (opt.chunk_size % core->model_stride);
 
-    core->decoder_opts = DECODER_INIT;
+    core->decoder_opts = openfish_decoder_default_opts();
     core->decoder_opts.q_shift = model_config.qbias;
     core->decoder_opts.q_scale = model_config.qscale;
 

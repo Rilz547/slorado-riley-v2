@@ -33,8 +33,8 @@ SOFTWARE.
 
 /** Riley Updates (Remove at the end)
  * @file basecaller_main.cpp
- * @lastmodified: Added LSRNN layer times
- * @lastpatched: 2026-06-24
+ * @lastmodified: Added LSRNN layer times (more).
+ * @lastpatched: 2026-07-01
 
 ******************************************************************************/
 
@@ -342,12 +342,27 @@ int basecaller_main(int argc, char* argv[]) {
         } else { // lstm
             lstm_stats_t *model_stats = (lstm_stats_t *)runner_stats[i]->model_stats;
             fprintf(stderr, "\n[%s]                     - conv_stack: %.3f sec", __func__, model_stats->time_conv_stack);
+            for (int c = 0; c < MAX_CONV_LAYERS && model_stats->time_conv[c] > 0.0; ++c) {
+                fprintf(stderr, "\n[%s]                         - conv[%d]: %.3f sec", __func__, c,
+                        model_stats->time_conv[c]);
+                fprintf(stderr, "\n[%s]                             - shape [N,C,T]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->conv_n[c], (long)model_stats->conv_c[c], (long)model_stats->conv_t[c]);
+            }
+            if (model_stats->time_conv_transpose > 0.0) {
+                fprintf(stderr, "\n[%s]                         - transpose: %.3f sec", __func__,
+                        model_stats->time_conv_transpose);
+            }
             fprintf(stderr, "\n[%s]                     - rnns: %.3f sec", __func__, model_stats->time_rnns);
-            // for (int r = 0; r < MAX_LSTM_LAYERS && model_stats->time_rnn[r] > 0.0; ++r) {
             // Individual RNN layer times
-            for (int r = 0; r < MAX_LSTM_LAYERS; ++r) {
+            for (int r = 0; r < MAX_LSTM_LAYERS && model_stats->time_rnn[r] > 0.0; ++r) {
                 fprintf(stderr, "\n[%s]                         - rnn[%d] (%s): %.3f sec", __func__, r,
                         (r % 2 == 0) ? "reverse" : "forward", model_stats->time_rnn[r]);
+                fprintf(stderr, "\n[%s]                             - shape [N,T,C]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->rnn_n[r], (long)model_stats->rnn_t[r], (long)model_stats->rnn_c[r]);
+                fprintf(stderr, "\n[%s]                             - flip: %.3f sec", __func__,
+                        model_stats->time_rnn_flip[r]);
+                fprintf(stderr, "\n[%s]                             - lstm: %.3f sec", __func__,
+                        model_stats->time_rnn_lstm[r]);
             }
             fprintf(stderr, "\n[%s]                     - crf_1: %.3f sec", __func__, model_stats->time_crf_1);
             fprintf(stderr, "\n[%s]                     - crf_2: %.3f sec", __func__, model_stats->time_crf_2);

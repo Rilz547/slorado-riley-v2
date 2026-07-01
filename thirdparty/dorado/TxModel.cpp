@@ -442,7 +442,7 @@ torch::Tensor LinearScaledCRFImpl::forward(const torch::Tensor &x) {
 }
 
 TxModelImpl::TxModelImpl(const CRFModelConfig &config, const torch::TensorOptions &options, tx_stats_t *_model_stats, bool use_flash, int nthreads) : m_options(options) {
-    convs = register_module("convs", ::ConvStack(config.convs));
+    convs = register_module("convs", ::ConvStack(config.convs, nullptr));
     tx_encoder = register_module("transformer_encoder", TxEncoderStack(config.tx->tx, m_options, _model_stats, use_flash, nthreads));
     tx_decoder = register_module("transformer_decoder", LinearUpsample(config.tx->upsample));
     crf = register_module("crf", LinearScaledCRF(config.tx->crf));

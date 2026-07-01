@@ -33,7 +33,7 @@ SOFTWARE.
 /** Riley Updates (Remove at the end)
  * @file slorado.h
  * @lastmodified: Added MAX_LSTM_LAYERS. Added rnn array to lstm_stats_t struct.
- * @lastpatched: 2026-06-24
+ * @lastpatched: 2026-07-01
 
 ******************************************************************************/
 
@@ -150,12 +150,23 @@ typedef struct {
 } db_t;
 
 // 8 cause there might be some hidden layers and also to support headroom if future model has more (also to not make struct huge)
+#define MAX_CONV_LAYERS 8
 #define MAX_LSTM_LAYERS 8
 
 typedef struct {
     double time_conv_stack;
+    double time_conv[MAX_CONV_LAYERS];
+    int64_t conv_n[MAX_CONV_LAYERS];
+    int64_t conv_c[MAX_CONV_LAYERS];
+    int64_t conv_t[MAX_CONV_LAYERS];
+    double time_conv_transpose;
     double time_rnns;
     double time_rnn[MAX_LSTM_LAYERS];
+    double time_rnn_flip[MAX_LSTM_LAYERS];
+    double time_rnn_lstm[MAX_LSTM_LAYERS];
+    int64_t rnn_n[MAX_LSTM_LAYERS];
+    int64_t rnn_t[MAX_LSTM_LAYERS];
+    int64_t rnn_c[MAX_LSTM_LAYERS];
     double time_crf_1;
     double time_crf_2;
     double time_clamp;

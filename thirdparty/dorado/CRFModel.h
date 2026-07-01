@@ -1,7 +1,7 @@
 /** Riley Updates (Remove at the end)
  * @file CRFModel.h
- * @lastmodified: Added LSTMStackImpl to get individual layer timings.
- * @lastpatched: 2026-06-24
+ * @lastmodified: Added LSTMStackImpl to get individual layer timings (more).
+ * @lastpatched: 2026-07-01
 
 ******************************************************************************/
 
@@ -21,7 +21,7 @@ using namespace torch::nn;
 ModuleHolder<AnyModule> load_lstm_model(const CRFModelConfig &model_config, const torch::TensorOptions &options, lstm_stats_t *model_stats);
 
 struct ConvStackImpl : torch::nn::Module {
-    explicit ConvStackImpl(const std::vector<ConvParams> &layer_params);
+    ConvStackImpl(const std::vector<ConvParams> &layer_params, lstm_stats_t *model_stats);
 
     torch::Tensor forward(torch::Tensor x);
 
@@ -31,6 +31,7 @@ struct ConvStackImpl : torch::nn::Module {
         torch::nn::Conv1d conv{nullptr};
     };
 
+    lstm_stats_t *model_stats{nullptr};
     std::vector<ConvLayer> layers;
 };
 
