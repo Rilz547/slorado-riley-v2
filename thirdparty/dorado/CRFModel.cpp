@@ -36,10 +36,26 @@ torch::Tensor ConvStackImpl::forward(torch::Tensor x) {
     const bool on_gpu = !x.device().is_cpu();
     const auto dev_idx = x.device().index();
 
+    if (model_stats && model_stats->conv_input_n == 0) {
+        model_stats->conv_input_n = x.size(0);
+        model_stats->conv_input_c = x.size(1);
+        model_stats->conv_input_t = x.size(2);
+    }
+
     for (size_t i = 0; i < layers.size(); ++i) {
         auto &layer = layers[i];
+        if (model_stats && i < MAX_CONV_LAYERS && model_stats->conv_in_n[i] == 0) {
+            model_stats->conv_in_n[i] = x.size(0);
+            model_stats->conv_in_c[i] = x.size(1);
+            model_stats->conv_in_t[i] = x.size(2);
+        }
+
         double a = realtime();
         x = layer.conv(x);
+        if (on_gpu) torch::cuda::synchronize(dev_idx);
+        double b = realtime();
+
+        double a2 = realtime();
         if (layer.params.activation == Activation::SWISH) {
             torch::silu_(x);
         } else if (layer.params.activation == Activation::SWISH_CLAMP) {
@@ -50,23 +66,38 @@ torch::Tensor ConvStackImpl::forward(torch::Tensor x) {
             ERROR("%s", "Unrecognised activation function id.");
         }
         if (on_gpu) torch::cuda::synchronize(dev_idx);
-        double b = realtime();
+        double b2 = realtime();
+
         if (model_stats && i < MAX_CONV_LAYERS) {
             if (model_stats->conv_n[i] == 0) {
                 model_stats->conv_n[i] = x.size(0);
                 model_stats->conv_c[i] = x.size(1);
                 model_stats->conv_t[i] = x.size(2);
             }
-            model_stats->time_conv[i] += b - a;
-            model_stats->time_conv_stack += b - a;
+            model_stats->time_conv_op[i] += b - a;
+            model_stats->time_conv_act[i] += b2 - a2;
+            model_stats->time_conv[i] += (b - a) + (b2 - a2);
+            model_stats->time_conv_stack += (b - a) + (b2 - a2);
         }
+    }
+
+    if (model_stats && model_stats->transpose_in_n == 0) {
+        model_stats->transpose_in_n = x.size(0);
+        model_stats->transpose_in_c = x.size(1);
+        model_stats->transpose_in_t = x.size(2);
     }
 
     double a = realtime();
     x = x.transpose(1, 2);
     if (on_gpu) torch::cuda::synchronize(dev_idx);
     double b = realtime();
+
     if (model_stats) {
+        if (model_stats->transpose_out_n == 0) {
+            model_stats->transpose_out_n = x.size(0);
+            model_stats->transpose_out_t = x.size(1);
+            model_stats->transpose_out_c = x.size(2);
+        }
         model_stats->time_conv_transpose += b - a;
         model_stats->time_conv_stack += b - a;
     }
@@ -111,6 +142,12 @@ torch::Tensor LSTMStackImpl::forward(torch::Tensor x) {
     const auto dev_idx = x.device().index();
 
     for (size_t i = 0; i < rnns.size(); ++i) {
+        if (model_stats && i < MAX_LSTM_LAYERS && model_stats->rnn_in_n[i] == 0) {
+            model_stats->rnn_in_n[i] = x.size(0);
+            model_stats->rnn_in_t[i] = x.size(1);
+            model_stats->rnn_in_c[i] = x.size(2);
+        }
+
         double a = realtime();
         auto flipped = x.flip(1);
         if (on_gpu) torch::cuda::synchronize(dev_idx);
@@ -134,8 +171,24 @@ torch::Tensor LSTMStackImpl::forward(torch::Tensor x) {
         }
     }
 
+    if (rnns.size() & 1) {
+        double a = realtime();
+        x = x.flip(1);
+        if (on_gpu) torch::cuda::synchronize(dev_idx);
+        double b = realtime();
+        if (model_stats) {
+            if (model_stats->rnn_out_flip_n == 0) {
+                model_stats->rnn_out_flip_n = x.size(0);
+                model_stats->rnn_out_flip_t = x.size(1);
+                model_stats->rnn_out_flip_c = x.size(2);
+            }
+            model_stats->time_rnn_out_flip += b - a;
+            model_stats->time_rnns += b - a;
+        }
+    }
+
     // Output is [N, T, C], contiguous
-    return (rnns.size() & 1) ? x.flip(1) : x;
+    return x;
 }
 
 ClampImpl::ClampImpl(float _min, float _max, bool _active)
@@ -189,11 +242,24 @@ torch::Tensor CRFModelImpl::forward(const torch::Tensor &x) {
 
     h = rnns->forward(h);
 
+    if (model_stats && model_stats->crf1_in_n == 0) {
+        model_stats->crf1_in_n = h.size(0);
+        model_stats->crf1_in_t = h.size(1);
+        model_stats->crf1_in_c = h.size(2);
+    }
+
     a = realtime();
     h = linear1->forward(h);
     if (!x.device().is_cpu()) torch::cuda::synchronize(x.device().index());
     b = realtime();
-    if (model_stats) model_stats->time_crf_1 += b - a;
+    if (model_stats) {
+        model_stats->time_crf_1 += b - a;
+        if (model_stats->crf1_out_n == 0) {
+            model_stats->crf1_out_n = h.size(0);
+            model_stats->crf1_out_t = h.size(1);
+            model_stats->crf1_out_c = h.size(2);
+        }
+    }
 
     if (has_linear2) {
         a = realtime();

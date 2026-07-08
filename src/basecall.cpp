@@ -217,10 +217,10 @@ static void call_chunks(
 
     ts->time_decode -= realtime();
     if (runner->device == "cpu") {
-        openfish_decode_cpu(T, N, C, nthreads, scores_TNC.data_ptr(), state_len, &core->decoder_opts, &moves, &sequence, &qstring);
+        openfish_decode_cpu(T, N, C, nthreads, scores_TNC.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len, &core->decoder_opts, &moves, &sequence, &qstring, &ts->decode_stats);
     } else {
 #ifdef USE_GPU
-        openfish_decode_gpu(T, N, C, scores_TNC.data_ptr(), state_len, &core->decoder_opts, runner->gpubuf, &moves, &sequence, &qstring);
+        openfish_decode_gpu(T, N, C, scores_TNC.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len, &core->decoder_opts, runner->gpubuf, &moves, &sequence, &qstring, &ts->decode_stats);
 #else
         ERROR("Invalid device: %s. Please compile again for GPU", runner->device.c_str());
         exit(EXIT_FAILURE);

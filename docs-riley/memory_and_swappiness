@@ -1,0 +1,28 @@
+## increase swap
+sudo fallocate -l 16G /swapfile
+
+### Set permissions and activate the file
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+
+### verify it worked
+free -h 
+#or 
+swapon --show
+
+remove the swap file
+sudo swapoff /swapfile
+sudo rm /swapfile
+
+## Also do this
+# Adjusting swappiness
+### check swappiness value
+cat /proc/sys/vm/swappiness
+
+### adjust swappiness value to 10
+sudo sysctl vm.swappiness=10
+
+### disable zram config
+sudo systemctl disable nvzramconfig
+

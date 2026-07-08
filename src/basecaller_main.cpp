@@ -342,33 +342,77 @@ int basecaller_main(int argc, char* argv[]) {
         } else { // lstm
             lstm_stats_t *model_stats = (lstm_stats_t *)runner_stats[i]->model_stats;
             fprintf(stderr, "\n[%s]                     - conv_stack: %.3f sec", __func__, model_stats->time_conv_stack);
+            if (model_stats->conv_input_n > 0) {
+                fprintf(stderr, "\n[%s]                         - input [N,C,T]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->conv_input_n, (long)model_stats->conv_input_c,
+                        (long)model_stats->conv_input_t);
+            }
             for (int c = 0; c < MAX_CONV_LAYERS && model_stats->time_conv[c] > 0.0; ++c) {
                 fprintf(stderr, "\n[%s]                         - conv[%d]: %.3f sec", __func__, c,
                         model_stats->time_conv[c]);
-                fprintf(stderr, "\n[%s]                             - shape [N,C,T]: [%ld, %ld, %ld]", __func__,
-                        (long)model_stats->conv_n[c], (long)model_stats->conv_c[c], (long)model_stats->conv_t[c]);
+                fprintf(stderr, "\n[%s]                             in  [N,C,T]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->conv_in_n[c], (long)model_stats->conv_in_c[c],
+                        (long)model_stats->conv_in_t[c]);
+                fprintf(stderr, "\n[%s]                             out [N,C,T]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->conv_n[c], (long)model_stats->conv_c[c],
+                        (long)model_stats->conv_t[c]);
+                fprintf(stderr, "\n[%s]                             op: %.3f sec  act: %.3f sec", __func__,
+                        model_stats->time_conv_op[c], model_stats->time_conv_act[c]);
             }
             if (model_stats->time_conv_transpose > 0.0) {
                 fprintf(stderr, "\n[%s]                         - transpose: %.3f sec", __func__,
                         model_stats->time_conv_transpose);
+                fprintf(stderr, "\n[%s]                             in  [N,C,T]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->transpose_in_n, (long)model_stats->transpose_in_c,
+                        (long)model_stats->transpose_in_t);
+                fprintf(stderr, "\n[%s]                             out [N,T,C]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->transpose_out_n, (long)model_stats->transpose_out_t,
+                        (long)model_stats->transpose_out_c);
             }
             fprintf(stderr, "\n[%s]                     - rnns: %.3f sec", __func__, model_stats->time_rnns);
-            // Individual RNN layer times
             for (int r = 0; r < MAX_LSTM_LAYERS && model_stats->time_rnn[r] > 0.0; ++r) {
                 fprintf(stderr, "\n[%s]                         - rnn[%d] (%s): %.3f sec", __func__, r,
                         (r % 2 == 0) ? "reverse" : "forward", model_stats->time_rnn[r]);
-                fprintf(stderr, "\n[%s]                             - shape [N,T,C]: [%ld, %ld, %ld]", __func__,
-                        (long)model_stats->rnn_n[r], (long)model_stats->rnn_t[r], (long)model_stats->rnn_c[r]);
-                fprintf(stderr, "\n[%s]                             - flip: %.3f sec", __func__,
-                        model_stats->time_rnn_flip[r]);
-                fprintf(stderr, "\n[%s]                             - lstm: %.3f sec", __func__,
-                        model_stats->time_rnn_lstm[r]);
+                fprintf(stderr, "\n[%s]                             in  [N,T,C]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->rnn_in_n[r], (long)model_stats->rnn_in_t[r],
+                        (long)model_stats->rnn_in_c[r]);
+                fprintf(stderr, "\n[%s]                             out [N,T,C]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->rnn_n[r], (long)model_stats->rnn_t[r],
+                        (long)model_stats->rnn_c[r]);
+                fprintf(stderr, "\n[%s]                             flip: %.3f sec  lstm: %.3f sec", __func__,
+                        model_stats->time_rnn_flip[r], model_stats->time_rnn_lstm[r]);
+            }
+            if (model_stats->time_rnn_out_flip > 0.0) {
+                fprintf(stderr, "\n[%s]                         - rnn_out_flip: %.3f sec", __func__,
+                        model_stats->time_rnn_out_flip);
+                fprintf(stderr, "\n[%s]                             out [N,T,C]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->rnn_out_flip_n, (long)model_stats->rnn_out_flip_t,
+                        (long)model_stats->rnn_out_flip_c);
             }
             fprintf(stderr, "\n[%s]                     - crf_1: %.3f sec", __func__, model_stats->time_crf_1);
+            if (model_stats->crf1_in_n > 0) {
+                fprintf(stderr, "\n[%s]                         in  [N,T,C]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->crf1_in_n, (long)model_stats->crf1_in_t,
+                        (long)model_stats->crf1_in_c);
+                fprintf(stderr, "\n[%s]                         out [N,T,C]: [%ld, %ld, %ld]", __func__,
+                        (long)model_stats->crf1_out_n, (long)model_stats->crf1_out_t,
+                        (long)model_stats->crf1_out_c);
+            }
             fprintf(stderr, "\n[%s]                     - crf_2: %.3f sec", __func__, model_stats->time_crf_2);
             fprintf(stderr, "\n[%s]                     - clamp: %.3f sec", __func__, model_stats->time_clamp);
         }
         fprintf(stderr, "\n[%s]                 - decode: %.3f sec", __func__, runner_stats[i]->time_decode);
+        if (runner_stats[i]->decode_stats.batch_size > 0) {
+            openfish_decode_stats_t *ds = &runner_stats[i]->decode_stats;
+            fprintf(stderr, "\n[%s]                     - scores [N,T,C]: [%d, %d, %d]", __func__,
+                    ds->batch_size, ds->n_timesteps, ds->n_channels);
+            fprintf(stderr, "\n[%s]                     - bwd_scan: %.3f sec", __func__, ds->time_bwd_scan);
+            fprintf(stderr, "\n[%s]                     - beam_search: %.3f sec", __func__, ds->time_beam_search);
+            fprintf(stderr, "\n[%s]                     - fwd_post_scan: %.3f sec", __func__, ds->time_fwd_post_scan);
+            fprintf(stderr, "\n[%s]                     - qual_data: %.3f sec", __func__, ds->time_qual_data);
+            fprintf(stderr, "\n[%s]                     - gen_sequence: %.3f sec", __func__, ds->time_gen_sequence);
+            fprintf(stderr, "\n[%s]                     - d2h_copy: %.3f sec", __func__, ds->time_d2h_copy);
+        }
         fprintf(stderr, "\n[%s]             - modcall: %.3f sec", __func__, runner_stats[i]->time_modcall);
         // fprintf(stderr, "\n[%s]             - total data points copied: %lu", __func__, runner_stats[i]->total_dp);
     }

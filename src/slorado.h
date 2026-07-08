@@ -156,20 +156,47 @@ typedef struct {
 typedef struct {
     double time_conv_stack;
     double time_conv[MAX_CONV_LAYERS];
+    double time_conv_op[MAX_CONV_LAYERS];
+    double time_conv_act[MAX_CONV_LAYERS];
+    int64_t conv_input_n;
+    int64_t conv_input_c;
+    int64_t conv_input_t;
+    int64_t conv_in_n[MAX_CONV_LAYERS];
+    int64_t conv_in_c[MAX_CONV_LAYERS];
+    int64_t conv_in_t[MAX_CONV_LAYERS];
     int64_t conv_n[MAX_CONV_LAYERS];
     int64_t conv_c[MAX_CONV_LAYERS];
     int64_t conv_t[MAX_CONV_LAYERS];
     double time_conv_transpose;
+    int64_t transpose_in_n;
+    int64_t transpose_in_c;
+    int64_t transpose_in_t;
+    int64_t transpose_out_n;
+    int64_t transpose_out_t;
+    int64_t transpose_out_c;
     double time_rnns;
     double time_rnn[MAX_LSTM_LAYERS];
     double time_rnn_flip[MAX_LSTM_LAYERS];
     double time_rnn_lstm[MAX_LSTM_LAYERS];
+    int64_t rnn_in_n[MAX_LSTM_LAYERS];
+    int64_t rnn_in_t[MAX_LSTM_LAYERS];
+    int64_t rnn_in_c[MAX_LSTM_LAYERS];
     int64_t rnn_n[MAX_LSTM_LAYERS];
     int64_t rnn_t[MAX_LSTM_LAYERS];
     int64_t rnn_c[MAX_LSTM_LAYERS];
+    double time_rnn_out_flip;
+    int64_t rnn_out_flip_n;
+    int64_t rnn_out_flip_t;
+    int64_t rnn_out_flip_c;
     double time_crf_1;
     double time_crf_2;
     double time_clamp;
+    int64_t crf1_in_n;
+    int64_t crf1_in_t;
+    int64_t crf1_in_c;
+    int64_t crf1_out_n;
+    int64_t crf1_out_t;
+    int64_t crf1_out_c;
 } lstm_stats_t;
 
 typedef struct {
@@ -196,6 +223,8 @@ typedef struct {
     double time_infer;
     double time_decode;
     double time_modcall;
+
+    openfish_decode_stats_t decode_stats;
 
     void *model_stats;
 
