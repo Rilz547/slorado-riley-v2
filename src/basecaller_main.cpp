@@ -33,13 +33,14 @@ SOFTWARE.
 
 /** Riley Updates (Remove at the end)
  * @file basecaller_main.cpp
- * @lastmodified: Added LSRNN layer times (more).
- * @lastpatched: 2026-07-01
+ * @lastmodified: Added LSRNN layer times in colour, and remembered to update this message lol.
+ * @lastpatched: 2026-07-11
 
 ******************************************************************************/
 
 #include <getopt.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,6 +60,59 @@ static const std::unordered_set<std::string> supported = std::unordered_set<std:
 
 static inline bool is_modbase_supported(const char *mod) {
     return supported.find(std::string(mod)) != supported.end();
+}
+
+enum profile_colour_level {
+    PROFILE_COLOUR_SUMMARY = 0,
+    PROFILE_COLOUR_PIPELINE,
+    PROFILE_COLOUR_RUNNERS,
+    PROFILE_COLOUR_BASECALL,
+    PROFILE_COLOUR_INFERENCE,
+    PROFILE_COLOUR_CONV,
+    PROFILE_COLOUR_RNN,
+    PROFILE_COLOUR_CRF,
+    PROFILE_COLOUR_DECODE,
+    PROFILE_COLOUR_DECODE_DETAIL,
+    PROFILE_COLOUR_DETAIL,
+};
+
+static bool profile_use_colour(void) {
+    static int use_colour = -1;
+    if (use_colour < 0) {
+        use_colour = isatty(STDERR_FILENO) ? 1 : 0;
+    }
+    return use_colour != 0;
+}
+
+static const char *profile_colour_code(profile_colour_level level) {
+    if (!profile_use_colour()) {
+        return "";
+    }
+    switch (level) {
+        case PROFILE_COLOUR_SUMMARY:       return "\033[1;36m";
+        case PROFILE_COLOUR_PIPELINE:      return "\033[1;32m";
+        case PROFILE_COLOUR_RUNNERS:       return "\033[1;33m";
+        case PROFILE_COLOUR_BASECALL:      return "\033[1;35m";
+        case PROFILE_COLOUR_INFERENCE:     return "\033[1;34m";
+        case PROFILE_COLOUR_CONV:          return "\033[36m";
+        case PROFILE_COLOUR_RNN:           return "\033[32m";
+        case PROFILE_COLOUR_CRF:           return "\033[33m";
+        case PROFILE_COLOUR_DECODE:        return "\033[1;91m";
+        case PROFILE_COLOUR_DECODE_DETAIL: return "\033[95m";
+        case PROFILE_COLOUR_DETAIL:        return "\033[2;37m";
+        default:                           return "";
+    }
+}
+
+static void profile_print(profile_colour_level level, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    fputs(profile_colour_code(level), stderr);
+    vfprintf(stderr, fmt, args);
+    if (profile_use_colour()) {
+        fputs(NO_COLOUR, stderr);
+    }
+    va_end(args);
 }
 
 static struct option long_options[] = {
@@ -304,129 +358,129 @@ int basecaller_main(int argc, char* argv[]) {
     b = realtime();
     core->time_free_db += b-a;
 
-    fprintf(stderr, "[%s] total entries: %ld", __func__, (long)core->total_reads);
-    fprintf(stderr, "\n[%s] total bytes: %.1f M", __func__, core->sum_bytes/(float)(1000*1000));
+    profile_print(PROFILE_COLOUR_SUMMARY, "\n[%s] total entries: %ld", __func__, (long)core->total_reads);
+    profile_print(PROFILE_COLOUR_SUMMARY, "\n[%s] total bytes: %.1f M", __func__, core->sum_bytes/(float)(1000*1000));
 
-    fprintf(stderr, "\n[%s] model initialization: %.3f sec", __func__, core->time_init_runners);
-    fprintf(stderr, "\n[%s] data loading: %.3f sec", __func__, core->time_load_db);
-    fprintf(stderr, "\n[%s] data processing: %.3f sec", __func__, core->time_process_db);
-    fprintf(stderr, "\n[%s]     - parse: %.3f sec", __func__, core->time_parse);
-    fprintf(stderr, "\n[%s]     - preprocess: %.3f sec", __func__, core->time_preproc);
-    fprintf(stderr, "\n[%s]     - runners: %.3f sec", __func__, core->time_runners);
-    fprintf(stderr, "\n[%s]          - synchronisation: %.3f sec", __func__, core->time_sync);
+    profile_print(PROFILE_COLOUR_SUMMARY, "\n[%s] model initialization: %.3f sec", __func__, core->time_init_runners);
+    profile_print(PROFILE_COLOUR_SUMMARY, "\n[%s] data loading: %.3f sec", __func__, core->time_load_db);
+    profile_print(PROFILE_COLOUR_PIPELINE, "\n[%s] data processing: %.3f sec", __func__, core->time_process_db);
+    profile_print(PROFILE_COLOUR_PIPELINE, "\n[%s]     - parse: %.3f sec", __func__, core->time_parse);
+    profile_print(PROFILE_COLOUR_PIPELINE, "\n[%s]     - preprocess: %.3f sec", __func__, core->time_preproc);
+    profile_print(PROFILE_COLOUR_RUNNERS, "\n[%s]     - runners: %.3f sec", __func__, core->time_runners);
+    profile_print(PROFILE_COLOUR_RUNNERS, "\n[%s]          - synchronisation: %.3f sec", __func__, core->time_sync);
 
     auto runner_stats = *core->runner_stats;
     for (size_t i = 0; i < runner_stats.size(); ++i) {
-        fprintf(stderr, "\n[%s]          - model runner [%zu]: %.3f sec", __func__, i,
+        profile_print(PROFILE_COLOUR_RUNNERS, "\n[%s]          - model runner [%zu]: %.3f sec", __func__, i,
             runner_stats[i]->time_basecall +
             runner_stats[i]->time_accept +
             runner_stats[i]->time_modcall
         );
-        fprintf(stderr, "\n[%s]             - accept: %.3f sec", __func__, runner_stats[i]->time_accept);
-        fprintf(stderr, "\n[%s]             - basecall: %.3f sec", __func__, runner_stats[i]->time_basecall);
-        fprintf(stderr, "\n[%s]                 - inference: %.3f sec", __func__, runner_stats[i]->time_infer);
+        profile_print(PROFILE_COLOUR_BASECALL, "\n[%s]             - accept: %.3f sec", __func__, runner_stats[i]->time_accept);
+        profile_print(PROFILE_COLOUR_BASECALL, "\n[%s]             - basecall: %.3f sec", __func__, runner_stats[i]->time_basecall);
+        profile_print(PROFILE_COLOUR_INFERENCE, "\n[%s]                 - inference: %.3f sec", __func__, runner_stats[i]->time_infer);
         if (core->model_config->tx != NULL) { // tx
             tx_stats_t *model_stats = (tx_stats_t *)runner_stats[i]->model_stats;
-            fprintf(stderr, "\n[%s]                     - conv_stack: %.3f sec", __func__, model_stats->time_conv_stack);
-            fprintf(stderr, "\n[%s]                     - tx_encoder: %.3f sec", __func__, model_stats->time_tx_encoder);
-            fprintf(stderr, "\n[%s]                         - self_attn: %.3f sec", __func__, model_stats->time_self_attn);
-            fprintf(stderr, "\n[%s]                             - mm: %.3f sec", __func__, model_stats->time_mm);
-            fprintf(stderr, "\n[%s]                             - rotary_emb: %.3f sec", __func__, model_stats->time_rotary_emb);
-            fprintf(stderr, "\n[%s]                             - sdp_attn: %.3f sec", __func__, model_stats->time_sdp_attn);
-            fprintf(stderr, "\n[%s]                             - out_proj: %.3f sec", __func__, model_stats->time_out_proj);
-            fprintf(stderr, "\n[%s]                         - norm1: %.3f sec", __func__, model_stats->time_norm1);
-            fprintf(stderr, "\n[%s]                         - ff: %.3f sec", __func__, model_stats->time_ff);
-            fprintf(stderr, "\n[%s]                         - norm2: %.3f sec", __func__, model_stats->time_norm2);
-            fprintf(stderr, "\n[%s]                     - tx_decoder: %.3f sec", __func__, model_stats->time_tx_decoder);
-            fprintf(stderr, "\n[%s]                     - crf: %.3f sec", __func__, model_stats->time_crf);
+            profile_print(PROFILE_COLOUR_CONV, "\n[%s]                     - conv_stack: %.3f sec", __func__, model_stats->time_conv_stack);
+            profile_print(PROFILE_COLOUR_RNN, "\n[%s]                     - tx_encoder: %.3f sec", __func__, model_stats->time_tx_encoder);
+            profile_print(PROFILE_COLOUR_RNN, "\n[%s]                         - self_attn: %.3f sec", __func__, model_stats->time_self_attn);
+            profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             - mm: %.3f sec", __func__, model_stats->time_mm);
+            profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             - rotary_emb: %.3f sec", __func__, model_stats->time_rotary_emb);
+            profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             - sdp_attn: %.3f sec", __func__, model_stats->time_sdp_attn);
+            profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             - out_proj: %.3f sec", __func__, model_stats->time_out_proj);
+            profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                         - norm1: %.3f sec", __func__, model_stats->time_norm1);
+            profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                         - ff: %.3f sec", __func__, model_stats->time_ff);
+            profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                         - norm2: %.3f sec", __func__, model_stats->time_norm2);
+            profile_print(PROFILE_COLOUR_CONV, "\n[%s]                     - tx_decoder: %.3f sec", __func__, model_stats->time_tx_decoder);
+            profile_print(PROFILE_COLOUR_CRF, "\n[%s]                     - crf: %.3f sec", __func__, model_stats->time_crf);
         } else { // lstm
             lstm_stats_t *model_stats = (lstm_stats_t *)runner_stats[i]->model_stats;
-            fprintf(stderr, "\n[%s]                     - conv_stack: %.3f sec", __func__, model_stats->time_conv_stack);
+            profile_print(PROFILE_COLOUR_CONV, "\n[%s]                     - conv_stack: %.3f sec", __func__, model_stats->time_conv_stack);
             if (model_stats->conv_input_n > 0) {
-                fprintf(stderr, "\n[%s]                         - input [N,C,T]: [%ld, %ld, %ld]", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                         - input [N,C,T]: [%ld, %ld, %ld]", __func__,
                         (long)model_stats->conv_input_n, (long)model_stats->conv_input_c,
                         (long)model_stats->conv_input_t);
             }
             for (int c = 0; c < MAX_CONV_LAYERS && model_stats->time_conv[c] > 0.0; ++c) {
-                fprintf(stderr, "\n[%s]                         - conv[%d]: %.3f sec", __func__, c,
+                profile_print(PROFILE_COLOUR_CONV, "\n[%s]                         - conv[%d]: %.3f sec", __func__, c,
                         model_stats->time_conv[c]);
-                fprintf(stderr, "\n[%s]                             in  [N,C,T]: [%ld, %ld, %ld]", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             in  [N,C,T]: [%ld, %ld, %ld]", __func__,
                         (long)model_stats->conv_in_n[c], (long)model_stats->conv_in_c[c],
                         (long)model_stats->conv_in_t[c]);
-                fprintf(stderr, "\n[%s]                             out [N,C,T]: [%ld, %ld, %ld]", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             out [N,C,T]: [%ld, %ld, %ld]", __func__,
                         (long)model_stats->conv_n[c], (long)model_stats->conv_c[c],
                         (long)model_stats->conv_t[c]);
-                fprintf(stderr, "\n[%s]                             op: %.3f sec  act: %.3f sec", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             op: %.3f sec  act: %.3f sec", __func__,
                         model_stats->time_conv_op[c], model_stats->time_conv_act[c]);
             }
             if (model_stats->time_conv_transpose > 0.0) {
-                fprintf(stderr, "\n[%s]                         - transpose: %.3f sec", __func__,
+                profile_print(PROFILE_COLOUR_CONV, "\n[%s]                         - transpose: %.3f sec", __func__,
                         model_stats->time_conv_transpose);
-                fprintf(stderr, "\n[%s]                             in  [N,C,T]: [%ld, %ld, %ld]", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             in  [N,C,T]: [%ld, %ld, %ld]", __func__,
                         (long)model_stats->transpose_in_n, (long)model_stats->transpose_in_c,
                         (long)model_stats->transpose_in_t);
-                fprintf(stderr, "\n[%s]                             out [N,T,C]: [%ld, %ld, %ld]", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             out [N,T,C]: [%ld, %ld, %ld]", __func__,
                         (long)model_stats->transpose_out_n, (long)model_stats->transpose_out_t,
                         (long)model_stats->transpose_out_c);
             }
-            fprintf(stderr, "\n[%s]                     - rnns: %.3f sec", __func__, model_stats->time_rnns);
+            profile_print(PROFILE_COLOUR_RNN, "\n[%s]                     - rnns: %.3f sec", __func__, model_stats->time_rnns);
             for (int r = 0; r < MAX_LSTM_LAYERS && model_stats->time_rnn[r] > 0.0; ++r) {
-                fprintf(stderr, "\n[%s]                         - rnn[%d] (%s): %.3f sec", __func__, r,
+                profile_print(PROFILE_COLOUR_RNN, "\n[%s]                         - rnn[%d] (%s): %.3f sec", __func__, r,
                         (r % 2 == 0) ? "reverse" : "forward", model_stats->time_rnn[r]);
-                fprintf(stderr, "\n[%s]                             in  [N,T,C]: [%ld, %ld, %ld]", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             in  [N,T,C]: [%ld, %ld, %ld]", __func__,
                         (long)model_stats->rnn_in_n[r], (long)model_stats->rnn_in_t[r],
                         (long)model_stats->rnn_in_c[r]);
-                fprintf(stderr, "\n[%s]                             out [N,T,C]: [%ld, %ld, %ld]", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             out [N,T,C]: [%ld, %ld, %ld]", __func__,
                         (long)model_stats->rnn_n[r], (long)model_stats->rnn_t[r],
                         (long)model_stats->rnn_c[r]);
-                fprintf(stderr, "\n[%s]                             flip: %.3f sec  lstm: %.3f sec", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             flip: %.3f sec  lstm: %.3f sec", __func__,
                         model_stats->time_rnn_flip[r], model_stats->time_rnn_lstm[r]);
             }
             if (model_stats->time_rnn_out_flip > 0.0) {
-                fprintf(stderr, "\n[%s]                         - rnn_out_flip: %.3f sec", __func__,
+                profile_print(PROFILE_COLOUR_RNN, "\n[%s]                         - rnn_out_flip: %.3f sec", __func__,
                         model_stats->time_rnn_out_flip);
-                fprintf(stderr, "\n[%s]                             out [N,T,C]: [%ld, %ld, %ld]", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                             out [N,T,C]: [%ld, %ld, %ld]", __func__,
                         (long)model_stats->rnn_out_flip_n, (long)model_stats->rnn_out_flip_t,
                         (long)model_stats->rnn_out_flip_c);
             }
-            fprintf(stderr, "\n[%s]                     - crf_1: %.3f sec", __func__, model_stats->time_crf_1);
+            profile_print(PROFILE_COLOUR_CRF, "\n[%s]                     - crf_1: %.3f sec", __func__, model_stats->time_crf_1);
             if (model_stats->crf1_in_n > 0) {
-                fprintf(stderr, "\n[%s]                         in  [N,T,C]: [%ld, %ld, %ld]", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                         in  [N,T,C]: [%ld, %ld, %ld]", __func__,
                         (long)model_stats->crf1_in_n, (long)model_stats->crf1_in_t,
                         (long)model_stats->crf1_in_c);
-                fprintf(stderr, "\n[%s]                         out [N,T,C]: [%ld, %ld, %ld]", __func__,
+                profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]                         out [N,T,C]: [%ld, %ld, %ld]", __func__,
                         (long)model_stats->crf1_out_n, (long)model_stats->crf1_out_t,
                         (long)model_stats->crf1_out_c);
             }
-            fprintf(stderr, "\n[%s]                     - crf_2: %.3f sec", __func__, model_stats->time_crf_2);
-            fprintf(stderr, "\n[%s]                     - clamp: %.3f sec", __func__, model_stats->time_clamp);
+            profile_print(PROFILE_COLOUR_CRF, "\n[%s]                     - crf_2: %.3f sec", __func__, model_stats->time_crf_2);
+            profile_print(PROFILE_COLOUR_CRF, "\n[%s]                     - clamp: %.3f sec", __func__, model_stats->time_clamp);
         }
-        fprintf(stderr, "\n[%s]                 - decode: %.3f sec", __func__, runner_stats[i]->time_decode);
+        profile_print(PROFILE_COLOUR_DECODE, "\n[%s]                 - decode: %.3f sec", __func__, runner_stats[i]->time_decode);
         if (runner_stats[i]->decode_stats.batch_size > 0) {
             openfish_decode_stats_t *ds = &runner_stats[i]->decode_stats;
-            fprintf(stderr, "\n[%s]                     - scores [N,T,C]: [%d, %d, %d]", __func__,
+            profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - scores [N,T,C]: [%d, %d, %d]", __func__,
                     ds->batch_size, ds->n_timesteps, ds->n_channels);
-            fprintf(stderr, "\n[%s]                     - bwd_scan: %.3f sec", __func__, ds->time_bwd_scan);
-            fprintf(stderr, "\n[%s]                     - beam_search: %.3f sec", __func__, ds->time_beam_search);
-            fprintf(stderr, "\n[%s]                     - fwd_post_scan: %.3f sec", __func__, ds->time_fwd_post_scan);
-            fprintf(stderr, "\n[%s]                     - qual_data: %.3f sec", __func__, ds->time_qual_data);
-            fprintf(stderr, "\n[%s]                     - gen_sequence: %.3f sec", __func__, ds->time_gen_sequence);
-            fprintf(stderr, "\n[%s]                     - d2h_copy: %.3f sec", __func__, ds->time_d2h_copy);
+            profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - bwd_scan: %.3f sec", __func__, ds->time_bwd_scan);
+            profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - beam_search: %.3f sec", __func__, ds->time_beam_search);
+            profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - fwd_post_scan: %.3f sec", __func__, ds->time_fwd_post_scan);
+            profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - qual_data: %.3f sec", __func__, ds->time_qual_data);
+            profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - gen_sequence: %.3f sec", __func__, ds->time_gen_sequence);
+            profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - d2h_copy: %.3f sec", __func__, ds->time_d2h_copy);
         }
-        fprintf(stderr, "\n[%s]             - modcall: %.3f sec", __func__, runner_stats[i]->time_modcall);
-        // fprintf(stderr, "\n[%s]             - total data points copied: %lu", __func__, runner_stats[i]->total_dp);
+        profile_print(PROFILE_COLOUR_BASECALL, "\n[%s]             - modcall: %.3f sec", __func__, runner_stats[i]->time_modcall);
+        // profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]             - total data points copied: %lu", __func__, runner_stats[i]->total_dp);
     }
-    fprintf(stderr, "\n[%s]     - postprocess: %.3f sec", __func__, core->time_postproc);
-    fprintf(stderr, "\n[%s]     - mod_preprocess: %.3f sec", __func__, core->time_preproc_mod);
-    // fprintf(stderr, "\n[%s]         - seq_to_sig_map: %.3f sec", __func__, core->time_seq_to_sig_map);
-    // fprintf(stderr, "\n[%s]         - seq_to_ints: %.3f sec", __func__, core->time_seq_to_ints);
-    // fprintf(stderr, "\n[%s]         - populate_hits_sig: %.3f sec", __func__, core->time_populate_hits_sig);
-    // fprintf(stderr, "\n[%s]         - populate_signal: %.3f sec", __func__, core->time_populate_signal);
-    // fprintf(stderr, "\n[%s]         - get_minimal_encoding_skips: %.3f sec", __func__, core->time_get_minimal_encoding_skips);
-    // fprintf(stderr, "\n[%s]         - populate_encoded_kmer: %.3f sec", __func__, core->time_populate_encoded_kmer);
-    fprintf(stderr, "\n[%s]     - mod_postprocess: %.3f sec", __func__, core->time_postproc_mod);
-    fprintf(stderr, "\n[%s] data output: %.3f sec", __func__, core->time_output);
-    fprintf(stderr, "\n[%s] data free: %.3f sec", __func__, core->time_free_db);
+    profile_print(PROFILE_COLOUR_PIPELINE, "\n[%s]     - postprocess: %.3f sec", __func__, core->time_postproc);
+    profile_print(PROFILE_COLOUR_PIPELINE, "\n[%s]     - mod_preprocess: %.3f sec", __func__, core->time_preproc_mod);
+    // profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]         - seq_to_sig_map: %.3f sec", __func__, core->time_seq_to_sig_map);
+    // profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]         - seq_to_ints: %.3f sec", __func__, core->time_seq_to_ints);
+    // profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]         - populate_hits_sig: %.3f sec", __func__, core->time_populate_hits_sig);
+    // profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]         - populate_signal: %.3f sec", __func__, core->time_populate_signal);
+    // profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]         - get_minimal_encoding_skips: %.3f sec", __func__, core->time_get_minimal_encoding_skips);
+    // profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]         - populate_encoded_kmer: %.3f sec", __func__, core->time_populate_encoded_kmer);
+    profile_print(PROFILE_COLOUR_PIPELINE, "\n[%s]     - mod_postprocess: %.3f sec", __func__, core->time_postproc_mod);
+    profile_print(PROFILE_COLOUR_SUMMARY, "\n[%s] data output: %.3f sec", __func__, core->time_output);
+    profile_print(PROFILE_COLOUR_SUMMARY, "\n[%s] data free: %.3f sec", __func__, core->time_free_db);
     fprintf(stderr,"\n");
 
     // free the core data structure
