@@ -32,8 +32,8 @@ SOFTWARE.
 
 /** Riley Updates (Remove at the end)
  * @file slorado.h
- * @lastmodified: Added MAX_LSTM_LAYERS. Added rnn array to lstm_stats_t struct.
- * @lastpatched: 2026-07-01
+ * @lastmodified: Added SLORADO_OVERLAP_DECODE and sync_layers so inference can run alongside decode without per-layer CUDA waits.
+ * @lastpatched: 2026-07-14
 
 ******************************************************************************/
 
@@ -59,6 +59,7 @@ SOFTWARE.
 #define SLORADO_ACC         0x002 // accelerator enable
 #define SLORADO_SAM         0x004 // emit sam enable
 #define SLORADO_FLASH       0x008 // flash attention enable
+#define SLORADO_OVERLAP_DECODE 0x010 // overlap GPU infer with decode
 
 #define WORK_STEAL 1 // simple work stealing enabled or not (no work stealing mean no load balancing)
 #define STEAL_THRESH 1 // stealing threshold
@@ -197,6 +198,8 @@ typedef struct {
     int64_t crf1_out_n;
     int64_t crf1_out_t;
     int64_t crf1_out_c;
+    // When 0, skip per-op CUDA syncs so infer can overlap decode (layer timers become launch-only).
+    int sync_layers;
 } lstm_stats_t;
 
 typedef struct {

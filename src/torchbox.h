@@ -1,9 +1,21 @@
+/** Riley Updates (Remove at the end)
+ * @file torchbox.h
+ * @lastmodified: Extended runner_t with dual input buffers plus infer/decode CUDA streams and events for depth-1 overlap.
+ * @lastpatched: 2026-07-14
+
+******************************************************************************/
+
 #ifndef TORCHBOX_H
 #define TORCHBOX_H
 
 #include <torch/torch.h>
 #include <cstdint>
 #include "slorado.h"
+
+#ifdef USE_GPU
+#include <c10/cuda/CUDAStream.h>
+#include <cuda_runtime.h>
+#endif
 
 // per read data
 struct read_dat {
@@ -24,11 +36,17 @@ struct read_dat {
 struct runner {
     std::string device;
     torch::Tensor input_tensor;
+    torch::Tensor input_tensor_alt; // second accept buffer when overlap_decode
     torch::TensorOptions tensor_opts;
     torch::nn::ModuleHolder<torch::nn::AnyModule> module{nullptr};
+    bool overlap_decode = false;
+    int overlap_slot = 0;
 #ifdef USE_GPU
     int64_t device_idx;
     openfish_gpubuf_t *gpubuf;
+    c10::cuda::CUDAStream *infer_stream = nullptr;
+    c10::cuda::CUDAStream *decode_stream = nullptr;
+    cudaEvent_t infer_event[2] = {nullptr, nullptr};
 #endif
 
     // modbase stuff

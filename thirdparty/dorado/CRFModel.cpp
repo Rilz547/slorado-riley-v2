@@ -1,7 +1,7 @@
 /** Riley Updates (Remove at the end)
  * @file CRFModel.cpp
- * @lastmodified: Added even more model stats.
- * @lastpatched: 2026-07-01
+ * @lastmodified: Added CUDA stream synchronisation to the model for inference/decode overlap.
+ * @lastpatched: 2026-07-14
 
 ******************************************************************************/
 
@@ -15,6 +15,16 @@
 
 #ifdef USE_GPU
 #include <c10/cuda/CUDAStream.h>
+
+// Stream-local sync keeps per-layer timers valid without blocking other CUDA streams.
+// Skipped when model_stats->sync_layers == 0 (infer∥decode overlap).
+static inline void sync_current_stream_if_gpu(bool on_gpu, const lstm_stats_t *stats) {
+    if (on_gpu && (stats == nullptr || stats->sync_layers)) {
+        c10::cuda::getCurrentCUDAStream().synchronize();
+    }
+}
+#else
+static inline void sync_current_stream_if_gpu(bool, const lstm_stats_t *) {}
 #endif
 
 using namespace torch::nn;
@@ -52,7 +62,7 @@ torch::Tensor ConvStackImpl::forward(torch::Tensor x) {
 
         double a = realtime();
         x = layer.conv(x);
-        if (on_gpu) torch::cuda::synchronize(dev_idx);
+        sync_current_stream_if_gpu(on_gpu, model_stats);
         double b = realtime();
 
         double a2 = realtime();
@@ -65,7 +75,7 @@ torch::Tensor ConvStackImpl::forward(torch::Tensor x) {
         } else {
             ERROR("%s", "Unrecognised activation function id.");
         }
-        if (on_gpu) torch::cuda::synchronize(dev_idx);
+        sync_current_stream_if_gpu(on_gpu, model_stats);
         double b2 = realtime();
 
         if (model_stats && i < MAX_CONV_LAYERS) {
@@ -89,7 +99,7 @@ torch::Tensor ConvStackImpl::forward(torch::Tensor x) {
 
     double a = realtime();
     x = x.transpose(1, 2);
-    if (on_gpu) torch::cuda::synchronize(dev_idx);
+    sync_current_stream_if_gpu(on_gpu, model_stats);
     double b = realtime();
 
     if (model_stats) {
@@ -150,12 +160,12 @@ torch::Tensor LSTMStackImpl::forward(torch::Tensor x) {
 
         double a = realtime();
         auto flipped = x.flip(1);
-        if (on_gpu) torch::cuda::synchronize(dev_idx);
+        sync_current_stream_if_gpu(on_gpu, model_stats);
         double b = realtime();
 
         double a2 = realtime();
         x = std::get<0>(rnns[i](flipped));
-        if (on_gpu) torch::cuda::synchronize(dev_idx);
+        sync_current_stream_if_gpu(on_gpu, model_stats);
         double b2 = realtime();
 
         if (model_stats && i < MAX_LSTM_LAYERS) {
@@ -174,7 +184,7 @@ torch::Tensor LSTMStackImpl::forward(torch::Tensor x) {
     if (rnns.size() & 1) {
         double a = realtime();
         x = x.flip(1);
-        if (on_gpu) torch::cuda::synchronize(dev_idx);
+        sync_current_stream_if_gpu(on_gpu, model_stats);
         double b = realtime();
         if (model_stats) {
             if (model_stats->rnn_out_flip_n == 0) {
@@ -250,7 +260,7 @@ torch::Tensor CRFModelImpl::forward(const torch::Tensor &x) {
 
     a = realtime();
     h = linear1->forward(h);
-    if (!x.device().is_cpu()) torch::cuda::synchronize(x.device().index());
+    sync_current_stream_if_gpu(!x.device().is_cpu(), model_stats);
     b = realtime();
     if (model_stats) {
         model_stats->time_crf_1 += b - a;
@@ -264,7 +274,7 @@ torch::Tensor CRFModelImpl::forward(const torch::Tensor &x) {
     if (has_linear2) {
         a = realtime();
         h = linear2->forward(h);
-        if (!x.device().is_cpu()) torch::cuda::synchronize(x.device().index());
+        sync_current_stream_if_gpu(!x.device().is_cpu(), model_stats);
         b = realtime();
         if (model_stats) model_stats->time_crf_2 += b - a;
     }
@@ -272,7 +282,7 @@ torch::Tensor CRFModelImpl::forward(const torch::Tensor &x) {
     if (has_clamp) {
         a = realtime();
         h = clamp1->forward(h);
-        if (!x.device().is_cpu()) torch::cuda::synchronize(x.device().index());
+        sync_current_stream_if_gpu(!x.device().is_cpu(), model_stats);
         b = realtime();
         if (model_stats) model_stats->time_clamp += b - a;
     }

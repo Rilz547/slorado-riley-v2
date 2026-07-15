@@ -19,6 +19,17 @@ swapon --show
 ```sudo swapoff /swapfile```
 ```sudo rm /swapfile```
 
+# Adjusting swappiness
+### check swappiness value
+cat /proc/sys/vm/swappiness
+
+### adjust swappiness value to 10
+sudo sysctl vm.swappiness=10
+
+### disable zram config
+sudo systemctl disable nvzramconfig
+
+
 ## Entering the virtual environment
 > Run the following from the root
 
@@ -32,9 +43,3 @@ swapon --show
 > Found out that that limiting to 5 cores prevents crash, can possibly use all 6 but want to be safe
 
 ```make clean; make -j5 cuda=1 jetson=1 zstd=1 cxx11_abi=1 LIBTORCH_DIR=$TORCH_PATH;```
-
-## Making and Running (Good/testing version)
-
-### 20K Fast
-
-```make clean; make -j5 cuda=1 jetson=1 zstd=1 cxx11_abi=1 LIBTORCH_DIR=$TORCH_PATH; ./slorado basecaller -C 256 -o output_fast_20k.fastq models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 test/PGXXXX230339/reads_20k.blow5```

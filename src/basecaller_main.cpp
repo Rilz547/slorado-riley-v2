@@ -33,8 +33,8 @@ SOFTWARE.
 
 /** Riley Updates (Remove at the end)
  * @file basecaller_main.cpp
- * @lastmodified: Added LSRNN layer times in colour, and remembered to update this message lol.
- * @lastpatched: 2026-07-11
+ * @lastmodified: Added --overlap-decode=yes|no (default no) and print whether infer∥decode overlap is enabled.
+ * @lastpatched: 2026-07-14
 
 ******************************************************************************/
 
@@ -134,6 +134,7 @@ static struct option long_options[] = {
     {"gpu_batchsize", required_argument, 0, 'C'},   //15 gpu batchsize - number of chunks loaded at once [512]
     {"flash", required_argument, 0, 0},             //16 toggles flash attention when possible
     {"mod", required_argument, 0, 0},               //17 detect modified bases
+    {"overlap-decode", required_argument, 0, 0},    //18 overlap GPU inference with decode
     {0, 0, 0, 0}};
 
 
@@ -153,6 +154,7 @@ static inline void print_help_msg(FILE *fp_help, opt_t opt){
     fprintf(fp_help, "  -x DEVICE                   specify device [%s]\n", opt.device);
     fprintf(fp_help, "  -h                          shows help message and exits\n");
     fprintf(fp_help, "  --flash=yes|no              use flash attention for better performance [%s]\n", (opt.flag & SLORADO_FLASH) ? "yes" : "no");
+    fprintf(fp_help, "  --overlap-decode=yes|no     overlap GPU inference with decode [%s]\n", (opt.flag & SLORADO_OVERLAP_DECODE) ? "yes" : "no");
     fprintf(fp_help, "  --mod STR                   detect modified bases (5mCG_5hmCG@v3) [%s]\n", opt.mod ? opt.mod : "NULL");
     fprintf(fp_help, "  --verbose INT               verbosity level [%d]\n",(int)get_log_level());
     fprintf(fp_help, "  --version                   print version\n");
@@ -245,6 +247,8 @@ int basecaller_main(int argc, char* argv[]) {
             yes_or_no(&opt.flag, SLORADO_FLASH, long_options[longindex].name, optarg, 1);
         } else if (c == 0 && longindex == 17) { // flash attention
             opt.mod = optarg;
+        } else if (c == 0 && longindex == 18) { // overlap infer/decode
+            yes_or_no(&opt.flag, SLORADO_OVERLAP_DECODE, long_options[longindex].name, optarg, 1);
         }
     }
 
@@ -309,7 +313,12 @@ int basecaller_main(int argc, char* argv[]) {
     fprintf(stderr,"gpu batch size:     %d\n", opt.gpu_batch_size);
     fprintf(stderr,"no. threads:        %d\n", opt.num_thread);
     fprintf(stderr,"overlap:            %d\n", opt.overlap);
+    fprintf(stderr,"overlap decode:     %s\n", (opt.flag & SLORADO_OVERLAP_DECODE) ? "yes" : "no");
     fprintf(stderr, "\n");
+
+    if ((opt.flag & SLORADO_OVERLAP_DECODE) && strcmp(opt.device, "cpu") == 0) {
+        WARNING("%s", "--overlap-decode is ignored on CPU");
+    }
 
 /////////////////////////////////////////////////////////////////////////////
 

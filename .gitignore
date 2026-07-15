@@ -69,3 +69,4 @@ test/slorado*
 *.pdf
 *.temp*
 test/PGXXXX230339/reads_20k.blow5
+*.nsys*

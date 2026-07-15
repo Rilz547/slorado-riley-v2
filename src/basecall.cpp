@@ -28,6 +28,13 @@ SOFTWARE.
 
 ******************************************************************************/
 
+/** Riley Updates (Remove at the end)
+ * @file basecall.cpp
+ * @lastmodified: Depth-1 infer∥decode overlap: queue decode of batch N−1, run infer on N, then sync only the decode stream; scores stay NTC for openfish.
+ * @lastpatched: 2026-07-14
+
+******************************************************************************/
+
 #include <cstdint>
 #include <stdlib.h>
 #include <vector>
@@ -39,6 +46,9 @@ SOFTWARE.
 
 #ifdef USE_GPU
 #include <c10/core/DeviceGuard.h>
+#include <c10/cuda/CUDAGuard.h>
+#include <c10/cuda/CUDAStream.h>
+#include <cuda_runtime.h>
 #endif
 
 typedef struct {
@@ -48,6 +58,24 @@ typedef struct {
     int32_t start;
     int32_t end;
 } model_thread_arg_t;
+
+typedef struct {
+    std::vector<basecall_chunk_t *> chunks;
+    // CRF scores in openfish layout NTC [batch, time, channels] (no TNC transpose).
+    torch::Tensor scores_NTC;
+    int slot;
+    bool active;
+    // Set after decode kernels+D2H are queued but before stream sync / write.
+    bool decode_launched;
+    uint8_t *moves;
+    char *sequence;
+    char *qstring;
+    int T;
+} overlap_pending_t;
+
+static torch::Tensor &runner_input_slot(runner_t *runner, int slot) {
+    return (slot == 0) ? runner->input_tensor : runner->input_tensor_alt;
+}
 
 int64_t resolve_score_index(
     const int64_t hit_sig_abs,
@@ -152,7 +180,7 @@ static void mod_accept_chunk(const int num_chunks, const torch::Tensor& signal, 
     std::memcpy(&input_seqs_ptr[num_chunks * kmer_elem_count], kmers.data(),  kmer_elem_count * sizeof(int8_t));
 }
 
-static void accept_chunk(const int num_chunks, const basecall_chunk_t *chunk, runner_t *runner, int chunk_size) {
+static void accept_chunk(const int num_chunks, const basecall_chunk_t *chunk, runner_t *runner, int chunk_size, int slot) {
     ASSERT(chunk->read_dat->scaled_signal.size(0) > 0);
     torch::Tensor input_slice = (chunk->read_dat->scaled_signal).index({torch::indexing::Ellipsis, torch::indexing::Slice(chunk->input_offset, chunk->input_offset + chunk_size)});
     input_slice = input_slice.unsqueeze(0);
@@ -172,63 +200,16 @@ static void accept_chunk(const int num_chunks, const basecall_chunk_t *chunk, ru
         );
     }
 
-    runner->input_tensor.index_put_({num_chunks, 0}, {input_slice});
+    runner_input_slot(runner, slot).index_put_({num_chunks, 0}, {input_slice});
 }
 
-static void call_chunks(
-    const core_t* core,
+static void write_decode_results(
     const std::vector<basecall_chunk_t *> &chunks,
-    const int runner_idx
+    int T,
+    uint8_t *moves,
+    char *sequence,
+    char *qstring
 ) {
-    runner_t* runner = (*core->runners)[runner_idx];
-    runner_stat_t* ts = (*core->runner_stats)[runner_idx];
-
-#ifdef USE_GPU
-    c10::DeviceGuard device_guard(runner->tensor_opts.device());
-#endif
-    torch::InferenceMode guard;
-    
-    LOG_DEBUG("%s", "basecalling chunks");
-    ts->time_infer -= realtime();
-    auto scores = runner->module->forward(runner->input_tensor.to(runner->tensor_opts.device()));
-#ifdef USE_GPU
-    if (runner->device != "cpu") torch::cuda::synchronize(runner->device_idx);
-#endif
-    ts->time_infer += realtime();
-
-    auto scores_TNC = scores;
-    // scores_TNC = scores_TNC.to(torch::kCPU).to(torch::kF32).transpose(0, 1).contiguous();
-    scores_TNC = scores_TNC.transpose(0, 1).contiguous();
-#ifdef USE_GPU
-    if (runner->device != "cpu") torch::cuda::synchronize(runner->device_idx);
-#endif
-
-    const int T = scores_TNC.size(0);
-    const int N = scores_TNC.size(1);
-    const int C = scores_TNC.size(2);
-    const int state_len = core->model_config->state_len;
-    int nthreads = core->opt.num_thread / core->runners->size();
-
-    uint8_t *moves;
-    char *sequence;
-    char *qstring;
-
-    LOG_DEBUG("%s", "decoding scores");
-
-    ts->time_decode -= realtime();
-    if (runner->device == "cpu") {
-        openfish_decode_cpu(T, N, C, nthreads, scores_TNC.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len, &core->decoder_opts, &moves, &sequence, &qstring, &ts->decode_stats);
-    } else {
-#ifdef USE_GPU
-        openfish_decode_gpu(T, N, C, scores_TNC.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len, &core->decoder_opts, runner->gpubuf, &moves, &sequence, &qstring, &ts->decode_stats);
-#else
-        ERROR("Invalid device: %s. Please compile again for GPU", runner->device.c_str());
-        exit(EXIT_FAILURE);
-#endif
-    }
-
-    LOG_DEBUG("%s", "writing to chunks");
-
     for (size_t chunk = 0; chunk < chunks.size(); ++chunk) {
         size_t idx = chunk * T;
         chunks[chunk]->moves = std::vector<uint8_t>(moves + idx, moves + idx + T);
@@ -263,13 +244,87 @@ static void call_chunks(
             exit(EXIT_FAILURE);
         }
     }
+}
+
+static void decode_scores_to_chunks(
+    const core_t* core,
+    runner_t* runner,
+    runner_stat_t* ts,
+    const std::vector<basecall_chunk_t *> &chunks,
+    torch::Tensor &scores_NTC,
+    void *cuda_stream
+) {
+    // openfish expects NTC [N,T,C]; model forward already produces that layout.
+    const int N = scores_NTC.size(0);
+    const int T = scores_NTC.size(1);
+    const int C = scores_NTC.size(2);
+    const int state_len = core->model_config->state_len;
+    int nthreads = core->opt.num_thread / core->runners->size();
+
+    uint8_t *moves;
+    char *sequence;
+    char *qstring;
+
+    LOG_DEBUG("%s", "decoding scores");
+
+    ts->time_decode -= realtime();
+    if (runner->device == "cpu") {
+        openfish_decode_cpu(T, N, C, nthreads, scores_NTC.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len, &core->decoder_opts, &moves, &sequence, &qstring, &ts->decode_stats);
+    } else {
+#ifdef USE_GPU
+        openfish_decode_gpu(T, N, C, scores_NTC.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len, &core->decoder_opts, runner->gpubuf, &moves, &sequence, &qstring, &ts->decode_stats, cuda_stream);
+#else
+        ERROR("Invalid device: %s. Please compile again for GPU", runner->device.c_str());
+        exit(EXIT_FAILURE);
+#endif
+    }
+
+    LOG_DEBUG("%s", "writing to chunks");
+    write_decode_results(chunks, T, moves, sequence, qstring);
     ts->time_decode += realtime();
 
     LOG_DEBUG("%s", "done writing to chunks");
 
-    free(moves);
-    free(sequence);
-    free(qstring);
+    if (runner->device == "cpu") {
+        free(moves);
+        free(sequence);
+        free(qstring);
+    } else {
+#ifdef USE_GPU
+        openfish_decode_free_host(moves, sequence, qstring);
+#endif
+    }
+}
+
+static void call_chunks(
+    const core_t* core,
+    const std::vector<basecall_chunk_t *> &chunks,
+    const int runner_idx
+) {
+    runner_t* runner = (*core->runners)[runner_idx];
+    runner_stat_t* ts = (*core->runner_stats)[runner_idx];
+
+#ifdef USE_GPU
+    c10::DeviceGuard device_guard(runner->tensor_opts.device());
+#endif
+    torch::InferenceMode guard;
+    
+    LOG_DEBUG("%s", "basecalling chunks");
+    ts->time_infer -= realtime();
+    auto scores = runner->module->forward(runner->input_tensor.to(runner->tensor_opts.device()));
+#ifdef USE_GPU
+    if (runner->device != "cpu") torch::cuda::synchronize(runner->device_idx);
+#endif
+    ts->time_infer += realtime();
+
+    // Keep NTC — openfish decode consumes batch-major scores (see openfish/src/main.c).
+    // Transposing to TNC made N=1 look fine (layouts coincide) but destroyed accuracy for N>1.
+    auto scores_NTC = scores.contiguous();
+#ifdef USE_GPU
+    if (runner->device != "cpu") torch::cuda::synchronize(runner->device_idx);
+#endif
+
+    decode_scores_to_chunks(core, runner, ts, chunks, scores_NTC, nullptr);
 }
 
 static void mod_call_chunks(
@@ -399,7 +454,7 @@ static void basecall_chunks(
     LOG_DEBUG("%s", "accepting chunks");
     ts->time_accept -= realtime();
     for (size_t i = 0; i < chunks.size(); ++i) {
-        accept_chunk(i, chunks[i], runner, chunk_size);
+        accept_chunk(i, chunks[i], runner, chunk_size, 0);
     }
     ts->time_accept += realtime();
     LOG_DEBUG("%s", "done accepting chunks");
@@ -409,6 +464,147 @@ static void basecall_chunks(
     ts->time_basecall += realtime();
 }
 
+#ifdef USE_GPU
+/* Queue decode kernels + pinned D2H for pending; does NOT sync the stream. */
+static void overlap_launch_decode(
+    const core_t* core,
+    runner_t* runner,
+    runner_stat_t* ts,
+    overlap_pending_t *pending
+) {
+    if (!pending->active || pending->decode_launched) {
+        return;
+    }
+
+    c10::cuda::CUDAStreamGuard decode_guard(*runner->decode_stream);
+    cudaError_t err = cudaStreamWaitEvent(runner->decode_stream->stream(), runner->infer_event[pending->slot], 0);
+    if (err != cudaSuccess) {
+        ERROR("cudaStreamWaitEvent failed: %s", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    const int N = pending->scores_NTC.size(0);
+    const int T = pending->scores_NTC.size(1);
+    const int C = pending->scores_NTC.size(2);
+    const int state_len = core->model_config->state_len;
+
+    openfish_decode_gpu(
+        T, N, C,
+        pending->scores_NTC.data_ptr(),
+        OPENFISH_SCORE_F16, 1.0f, state_len,
+        &core->decoder_opts,
+        runner->gpubuf,
+        &pending->moves,
+        &pending->sequence,
+        &pending->qstring,
+        &ts->decode_stats,
+        (void *)runner->decode_stream->stream()
+    );
+
+    pending->T = T;
+    pending->decode_launched = true;
+}
+
+/* Block until queued decode finishes, then write chunk results. */
+static void overlap_finalize_decode(
+    runner_t* runner,
+    runner_stat_t* ts,
+    overlap_pending_t *pending
+) {
+    if (!pending->active || !pending->decode_launched) {
+        return;
+    }
+
+    cudaError_t err = cudaStreamSynchronize(runner->decode_stream->stream());
+    if (err != cudaSuccess) {
+        ERROR("cudaStreamSynchronize(decode) failed: %s", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    /* Resolve CUDA-event phase timers now that the stream has completed. */
+    openfish_decode_stats_finish(&ts->decode_stats);
+
+    write_decode_results(pending->chunks, pending->T, pending->moves, pending->sequence, pending->qstring);
+    openfish_decode_free_host(pending->moves, pending->sequence, pending->qstring);
+    pending->moves = nullptr;
+    pending->sequence = nullptr;
+    pending->qstring = nullptr;
+    pending->decode_launched = false;
+
+    pending->chunks.clear();
+    pending->scores_NTC = torch::Tensor();
+    pending->active = false;
+}
+
+static void basecall_chunks_overlap(
+    const core_t* core,
+    const int runner_idx,
+    const std::vector<basecall_chunk_t *> &chunks,
+    overlap_pending_t *pending
+) {
+    runner_stat_t* ts = (*core->runner_stats)[runner_idx];
+    runner_t* runner = (*core->runners)[runner_idx];
+    auto chunk_size = core->chunk_size;
+    const int slot = runner->overlap_slot;
+
+    c10::DeviceGuard device_guard(runner->tensor_opts.device());
+    torch::InferenceMode inference_guard;
+
+    LOG_DEBUG("%s", "accepting chunks (overlap)");
+    ts->time_accept -= realtime();
+    for (size_t i = 0; i < chunks.size(); ++i) {
+        accept_chunk(i, chunks[i], runner, chunk_size, slot);
+    }
+    ts->time_accept += realtime();
+
+    ts->time_basecall -= realtime();
+
+    // 1) Queue decode of the *previous* batch first (async: kernels + pinned D2H, no sync).
+    //    Infer for this batch can then run on infer_stream while decode runs.
+    const bool had_pending = pending->active;
+    if (had_pending) {
+        ts->time_decode -= realtime();
+        overlap_launch_decode(core, runner, ts, pending);
+        // decode timer continues through finalize below (includes GPU wait)
+    }
+
+    // 2) Run/queue infer for the current batch. While the host is in forward()
+    //    (or waiting on the infer stream), decode work already queued above can run.
+    ts->time_infer -= realtime();
+    torch::Tensor scores_NTC;
+    {
+        c10::cuda::CUDAStreamGuard infer_guard(*runner->infer_stream);
+        auto scores = runner->module->forward(runner_input_slot(runner, slot).to(runner->tensor_opts.device()));
+        scores_NTC = scores.contiguous(); // NTC for openfish
+        cudaError_t err = cudaEventRecord(runner->infer_event[slot], runner->infer_stream->stream());
+        if (err != cudaSuccess) {
+            ERROR("cudaEventRecord failed: %s", cudaGetErrorString(err));
+            exit(EXIT_FAILURE);
+        }
+    }
+    ts->time_infer += realtime();
+
+    // 3) Wait for previous decode + write results (infer of current may still be in flight
+    //    on the other stream from step 2 if forward returned before GPU finished).
+    if (had_pending) {
+        overlap_finalize_decode(runner, ts, pending);
+        ts->time_decode += realtime();
+    }
+
+    pending->chunks = chunks;
+    pending->scores_NTC = scores_NTC;
+    pending->slot = slot;
+    pending->active = true;
+    pending->decode_launched = false;
+    pending->moves = nullptr;
+    pending->sequence = nullptr;
+    pending->qstring = nullptr;
+    runner->overlap_slot = slot ^ 1;
+
+    ts->time_basecall += realtime();
+}
+#endif
+
 static void* pthread_single_basecall(void* voidargs) {
     model_thread_arg_t* args = (model_thread_arg_t*)voidargs;
     db_t* db = args->db;
@@ -417,8 +613,17 @@ static void* pthread_single_basecall(void* voidargs) {
     const size_t start = args->start;
     const size_t end = args->end;
     opt_t opt = core->opt;
+    runner_t* runner = (*core->runners)[runner_idx];
 
     std::vector<basecall_chunk_t *> chunks;
+#ifdef USE_GPU
+    overlap_pending_t pending{};
+    pending.active = false;
+    pending.decode_launched = false;
+    const bool use_overlap = runner->overlap_decode;
+#else
+    const bool use_overlap = false;
+#endif
 
     for (size_t read_idx = start; read_idx < end; ++read_idx) {
         auto& db_chunks = (*db->basecall_chunks)[read_idx];
@@ -427,7 +632,14 @@ static void* pthread_single_basecall(void* voidargs) {
             chunks.push_back(&db_chunks[chunk_idx]);
 
             if (chunks.size() == (size_t)opt.gpu_batch_size) {
-                basecall_chunks(core, runner_idx, chunks);
+#ifdef USE_GPU
+                if (use_overlap) {
+                    basecall_chunks_overlap(core, runner_idx, chunks, &pending);
+                } else
+#endif
+                {
+                    basecall_chunks(core, runner_idx, chunks);
+                }
                 chunks.clear();
             }
         }
@@ -435,8 +647,29 @@ static void* pthread_single_basecall(void* voidargs) {
 
     // leftover chunks
     if (chunks.size() > 0) {
-        basecall_chunks(core, runner_idx, chunks);
+#ifdef USE_GPU
+        if (use_overlap) {
+            basecall_chunks_overlap(core, runner_idx, chunks, &pending);
+        } else
+#endif
+        {
+            basecall_chunks(core, runner_idx, chunks);
+        }
     }
+
+#ifdef USE_GPU
+    if (use_overlap && pending.active) {
+        runner_stat_t* ts = (*core->runner_stats)[runner_idx];
+        c10::DeviceGuard device_guard(runner->tensor_opts.device());
+        ts->time_basecall -= realtime();
+        ts->time_decode -= realtime();
+        // Last batch: no following infer to overlap with — launch + finalize serially.
+        overlap_launch_decode(core, runner, ts, &pending);
+        overlap_finalize_decode(runner, ts, &pending);
+        ts->time_decode += realtime();
+        ts->time_basecall += realtime();
+    }
+#endif
 
     pthread_exit(0);
 }

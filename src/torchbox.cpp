@@ -29,6 +29,14 @@ SOFTWARE.
 
 
 ******************************************************************************/
+
+/** Riley Updates (Remove at the end)
+ * @file torchbox.cpp
+ * @lastmodified: When overlap is enabled, set up ping-pong inputs, dedicated CUDA streams, and disable per-layer sync so infer stays async.
+ * @lastpatched: 2026-07-14
+
+******************************************************************************/
+
 #include "error.h"
 #include "misc.h"
 #include "torchbox.h"
@@ -41,6 +49,9 @@ SOFTWARE.
 
 #ifdef USE_GPU
 #include <c10/core/DeviceGuard.h>
+#include <c10/cuda/CUDAStream.h>
+#include <c10/cuda/CUDAGuard.h>
+#include <cuda_runtime.h>
 #endif
 
 void free_read_dat(read_dat_t *read_dat) {
@@ -76,6 +87,7 @@ std::vector<std::string> parse_cuda_device_string(std::string device_arg) {
 lstm_stats_t *init_lstm_stats() {
     lstm_stats_t *lstm_stats = (lstm_stats_t *)calloc(1, sizeof(lstm_stats_t));
     MALLOC_CHK(lstm_stats);
+    lstm_stats->sync_layers = 1;
     return lstm_stats;
 }
 
@@ -124,6 +136,10 @@ void init_runner(
         } else {
             LOG_TRACE("%s", "loading lstm model");
             lstm_stats_t *model_stats = init_lstm_stats();
+            if (device != "cpu" && (core->opt.flag & SLORADO_OVERLAP_DECODE)) {
+                // Keep infer async so it can run concurrently with decode on another stream.
+                model_stats->sync_layers = 0;
+            }
             runner->module = load_lstm_model(*core->model_config, runner->tensor_opts, model_stats);
             (*core->runner_stats)[runner_idx]->model_stats = model_stats;
         }
@@ -137,6 +153,23 @@ void init_runner(
         runner->input_seqs = torch::zeros({batch_size, (int64_t)core->modbase_config->context.chunk_size, channels}, torch::TensorOptions().dtype(torch::kInt8).device(torch::kCPU));
     } else {
         runner->input_tensor = torch::zeros({batch_size, 1, (int64_t)core->chunk_size}, torch::TensorOptions().dtype(dtype).device(torch::kCPU));
+#ifdef USE_GPU
+        if (!modbase && device != "cpu" && (core->opt.flag & SLORADO_OVERLAP_DECODE)) {
+            runner->overlap_decode = true;
+            runner->overlap_slot = 0;
+            runner->input_tensor_alt = torch::zeros({batch_size, 1, (int64_t)core->chunk_size}, torch::TensorOptions().dtype(dtype).device(torch::kCPU));
+            runner->infer_stream = new c10::cuda::CUDAStream(c10::cuda::getStreamFromPool(false, runner->device_idx));
+            runner->decode_stream = new c10::cuda::CUDAStream(c10::cuda::getStreamFromPool(false, runner->device_idx));
+            for (int i = 0; i < 2; ++i) {
+                cudaError_t err = cudaEventCreateWithFlags(&runner->infer_event[i], cudaEventDisableTiming);
+                if (err != cudaSuccess) {
+                    ERROR("cudaEventCreateWithFlags failed: %s", cudaGetErrorString(err));
+                    exit(EXIT_FAILURE);
+                }
+            }
+            LOG_DEBUG("%s", "overlap-decode enabled for runner (infer/decode streams + double input buffer)");
+        }
+#endif
     }
 
     LOG_DEBUG("fully initialized model runner for device %s", device.c_str());
@@ -214,6 +247,18 @@ void free_runners(core_t *core) {
 #ifdef USE_GPU
             c10::DeviceGuard device_guard(runner->tensor_opts.device());
             openfish_gpubuf_free(runner->gpubuf);
+            if (runner->overlap_decode) {
+                for (int e = 0; e < 2; ++e) {
+                    if (runner->infer_event[e] != nullptr) {
+                        cudaEventDestroy(runner->infer_event[e]);
+                        runner->infer_event[e] = nullptr;
+                    }
+                }
+                delete runner->infer_stream;
+                delete runner->decode_stream;
+                runner->infer_stream = nullptr;
+                runner->decode_stream = nullptr;
+            }
 #endif
         }
         delete runner;
