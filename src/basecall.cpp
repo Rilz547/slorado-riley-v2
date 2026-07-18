@@ -30,8 +30,8 @@ SOFTWARE.
 
 /** Riley Updates (Remove at the end)
  * @file basecall.cpp
- * @lastmodified: Depth-1 infer∥decode overlap: queue decode of batch N−1, run infer on N, then sync only the decode stream; scores stay NTC for openfish.
- * @lastpatched: 2026-07-14
+ * @lastmodified: Stop per-batch openfish_decode_free_host on the GPU path; host decode buffers are now owned by gpubuf for the runner lifetime.
+ * @lastpatched: 2026-07-18
 
 ******************************************************************************/
 
@@ -289,11 +289,8 @@ static void decode_scores_to_chunks(
         free(moves);
         free(sequence);
         free(qstring);
-    } else {
-#ifdef USE_GPU
-        openfish_decode_free_host(moves, sequence, qstring);
-#endif
     }
+    /* GPU path: host buffers are persistent on openfish_gpubuf_t — do not free per batch. */
 }
 
 static void call_chunks(
@@ -525,7 +522,7 @@ static void overlap_finalize_decode(
     openfish_decode_stats_finish(&ts->decode_stats);
 
     write_decode_results(pending->chunks, pending->T, pending->moves, pending->sequence, pending->qstring);
-    openfish_decode_free_host(pending->moves, pending->sequence, pending->qstring);
+    /* Host buffers are persistent on gpubuf; only clear the stashed pointers. */
     pending->moves = nullptr;
     pending->sequence = nullptr;
     pending->qstring = nullptr;
