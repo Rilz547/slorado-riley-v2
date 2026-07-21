@@ -21,13 +21,13 @@ swapon --show
 
 # Adjusting swappiness
 ### check swappiness value
-cat /proc/sys/vm/swappiness
+```cat /proc/sys/vm/swappiness```
 
 ### adjust swappiness value to 10
-sudo sysctl vm.swappiness=10
+```sudo sysctl vm.swappiness=10```
 
 ### disable zram config
-sudo systemctl disable nvzramconfig
+```sudo systemctl disable nvzramconfig```
 
 
 ## Entering the virtual environment
@@ -39,7 +39,14 @@ sudo systemctl disable nvzramconfig
 
 ```export TORCH_PATH=/home/riley/slorado_venv/lib/python3.10/site-packages/torch```
 
-## Making/Building
-> Found out that that limiting to 5 cores prevents crash, can possibly use all 6 but want to be safe
+## Go into environment and build the whole thing
 
-```make clean; make -j5 cuda=1 jetson=1 zstd=1 cxx11_abi=1 LIBTORCH_DIR=$TORCH_PATH;```
+> run from the root
+
+```source slorado_venv/bin/activate; cd slorado-riley-v2; export TORCH_PATH=/home/riley/slorado_venv/lib/python3.10/site-packages/torch; make clean; make -j6 cuda=1 jetson=1 zstd=1 cxx11_abi=1 LIBTORCH_DIR=$TORCH_PATH```
+
+## Making/Building
+> Top-level `make` also builds openfish (`libopenfish.a`) as a dependency — no separate openfish make needed.
+> Use `-j6` on Orin (was safer at `-j5` if RAM/swap is tight).
+
+```make clean; make -j6 cuda=1 jetson=1 zstd=1 cxx11_abi=1 LIBTORCH_DIR=$TORCH_PATH```

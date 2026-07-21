@@ -30,7 +30,7 @@ SOFTWARE.
 
 /** Riley Updates (Remove at the end)
  * @file basecall.cpp
- * @lastmodified: Stop per-batch openfish_decode_free_host on the GPU path; host decode buffers are now owned by gpubuf for the runner lifetime.
+ * @lastmodified: P5-lite overlap: 2-slot host ring; sync prev decode, launch next decode, then write prev on CPU under next decode.
  * @lastpatched: 2026-07-18
 
 ******************************************************************************/
@@ -63,7 +63,8 @@ typedef struct {
     std::vector<basecall_chunk_t *> chunks;
     // CRF scores in openfish layout NTC [batch, time, channels] (no TNC transpose).
     torch::Tensor scores_NTC;
-    int slot;
+    int slot;       // input / infer_event ping-pong index
+    int host_slot;  // openfish pinned-host ring index (OPENFISH_HOST_RING)
     bool active;
     // Set after decode kernels+D2H are queued but before stream sync / write.
     bool decode_launched;
@@ -272,7 +273,7 @@ static void decode_scores_to_chunks(
         openfish_decode_cpu(T, N, C, nthreads, scores_NTC.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len, &core->decoder_opts, &moves, &sequence, &qstring, &ts->decode_stats);
     } else {
 #ifdef USE_GPU
-        openfish_decode_gpu(T, N, C, scores_NTC.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len, &core->decoder_opts, runner->gpubuf, &moves, &sequence, &qstring, &ts->decode_stats, cuda_stream);
+        openfish_decode_gpu(T, N, C, scores_NTC.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len, &core->decoder_opts, runner->gpubuf, &moves, &sequence, &qstring, &ts->decode_stats, cuda_stream, 0);
 #else
         ERROR("Invalid device: %s. Please compile again for GPU", runner->device.c_str());
         exit(EXIT_FAILURE);
@@ -462,7 +463,7 @@ static void basecall_chunks(
 }
 
 #ifdef USE_GPU
-/* Queue decode kernels + pinned D2H for pending; does NOT sync the stream. */
+/* Queue decode kernels + pinned D2H for pending into pending->host_slot; does NOT sync. */
 static void overlap_launch_decode(
     const core_t* core,
     runner_t* runner,
@@ -495,15 +496,16 @@ static void overlap_launch_decode(
         &pending->sequence,
         &pending->qstring,
         &ts->decode_stats,
-        (void *)runner->decode_stream->stream()
+        (void *)runner->decode_stream->stream(),
+        pending->host_slot
     );
 
     pending->T = T;
     pending->decode_launched = true;
 }
 
-/* Block until queued decode finishes, then write chunk results. */
-static void overlap_finalize_decode(
+/* Block until queued decode finishes and resolve phase timers. Leaves host ptrs for write. */
+static void overlap_sync_decode(
     runner_t* runner,
     runner_stat_t* ts,
     overlap_pending_t *pending
@@ -518,19 +520,34 @@ static void overlap_finalize_decode(
         exit(EXIT_FAILURE);
     }
 
-    /* Resolve CUDA-event phase timers now that the stream has completed. */
+    /* Must finish before the next decode launch (async timing state is one-shot). */
     openfish_decode_stats_finish(&ts->decode_stats);
+}
+
+/* Copy synced host results into chunks; host ring slot may be reused after this returns. */
+static void overlap_write_decode(overlap_pending_t *pending) {
+    if (!pending->active || !pending->decode_launched) {
+        return;
+    }
 
     write_decode_results(pending->chunks, pending->T, pending->moves, pending->sequence, pending->qstring);
-    /* Host buffers are persistent on gpubuf; only clear the stashed pointers. */
     pending->moves = nullptr;
     pending->sequence = nullptr;
     pending->qstring = nullptr;
     pending->decode_launched = false;
-
     pending->chunks.clear();
     pending->scores_NTC = torch::Tensor();
     pending->active = false;
+}
+
+/* Sync + write (flush path when there is no following batch to overlap the write with). */
+static void overlap_finalize_decode(
+    runner_t* runner,
+    runner_stat_t* ts,
+    overlap_pending_t *pending
+) {
+    overlap_sync_decode(runner, ts, pending);
+    overlap_write_decode(pending);
 }
 
 static void basecall_chunks_overlap(
@@ -547,7 +564,7 @@ static void basecall_chunks_overlap(
     c10::DeviceGuard device_guard(runner->tensor_opts.device());
     torch::InferenceMode inference_guard;
 
-    LOG_DEBUG("%s", "accepting chunks (overlap)");
+    LOG_DEBUG("%s", "accepting chunks (overlap / P5-lite)");
     ts->time_accept -= realtime();
     for (size_t i = 0; i < chunks.size(); ++i) {
         accept_chunk(i, chunks[i], runner, chunk_size, slot);
@@ -556,17 +573,14 @@ static void basecall_chunks_overlap(
 
     ts->time_basecall -= realtime();
 
-    // 1) Queue decode of the *previous* batch first (async: kernels + pinned D2H, no sync).
-    //    Infer for this batch can then run on infer_stream while decode runs.
+    // 1) Ensure previous batch's decode is queued (usually already launched last iteration).
     const bool had_pending = pending->active;
     if (had_pending) {
         ts->time_decode -= realtime();
         overlap_launch_decode(core, runner, ts, pending);
-        // decode timer continues through finalize below (includes GPU wait)
     }
 
-    // 2) Run/queue infer for the current batch. While the host is in forward()
-    //    (or waiting on the infer stream), decode work already queued above can run.
+    // 2) Infer current batch; overlaps in-flight decode of previous on decode_stream.
     ts->time_infer -= realtime();
     torch::Tensor scores_NTC;
     {
@@ -581,21 +595,41 @@ static void basecall_chunks_overlap(
     }
     ts->time_infer += realtime();
 
-    // 3) Wait for previous decode + write results (infer of current may still be in flight
-    //    on the other stream from step 2 if forward returned before GPU finished).
+    // 3) P5-lite: sync previous decode → launch current decode into the other host slot →
+    //    write previous results on the CPU while current decode runs on the GPU.
+    overlap_pending_t prev{};
+    prev.active = false;
     if (had_pending) {
-        overlap_finalize_decode(runner, ts, pending);
-        ts->time_decode += realtime();
+        overlap_sync_decode(runner, ts, pending);
+        prev = std::move(*pending);
+        /* Scores no longer needed after D2H; drop before launching the next decode. */
+        prev.scores_NTC = torch::Tensor();
+        pending->active = false;
+        pending->decode_launched = false;
+        pending->moves = nullptr;
+        pending->sequence = nullptr;
+        pending->qstring = nullptr;
+        pending->scores_NTC = torch::Tensor();
+        pending->chunks.clear();
     }
 
     pending->chunks = chunks;
     pending->scores_NTC = scores_NTC;
     pending->slot = slot;
+    pending->host_slot = had_pending ? (prev.host_slot ^ 1) : 0;
     pending->active = true;
     pending->decode_launched = false;
     pending->moves = nullptr;
     pending->sequence = nullptr;
     pending->qstring = nullptr;
+
+    overlap_launch_decode(core, runner, ts, pending);
+
+    if (had_pending) {
+        overlap_write_decode(&prev);
+        ts->time_decode += realtime();
+    }
+
     runner->overlap_slot = slot ^ 1;
 
     ts->time_basecall += realtime();
@@ -617,6 +651,7 @@ static void* pthread_single_basecall(void* voidargs) {
     overlap_pending_t pending{};
     pending.active = false;
     pending.decode_launched = false;
+    pending.host_slot = 0;
     const bool use_overlap = runner->overlap_decode;
 #else
     const bool use_overlap = false;
