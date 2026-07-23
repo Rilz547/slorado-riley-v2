@@ -386,12 +386,28 @@ void basecall_beam_cpu(
     uint8_t *moves;
     char *sequence;
     char *qstring;
-    openfish_decode_cpu_beam(T, N, C, nthreads, host_scores.data_ptr(), sdt, sscale, state_len,
+    // Jetson (ConcurrentManagedAccess=0): int8 scores alias a managed buffer; the beam worker
+    // threads read scores_NTC directly and would SIGSEGV while the runner's GPU is busy. D2H-copy
+    // the int8 scores into a plain host buffer on the scan stream (driver reads managed, no CPU
+    // deref). fp16 models already pass a host fp32 copy, so no copy needed there.
+    const void *scores_ptr = host_scores.data_ptr();
+    void *host_scores_buf = nullptr;
+    if (i8) {
+        const size_t scores_bytes = (size_t)N * (size_t)T * (size_t)C;  // int8 = 1 byte/element
+        host_scores_buf = malloc(scores_bytes);
+        if (!host_scores_buf) { ERROR("%s", "OOM allocating host scores buffer"); exit(EXIT_FAILURE); }
+        cudaStream_t sstream = gpubuf->stream ? (cudaStream_t)gpubuf->stream : (cudaStream_t)0;
+        cudaMemcpyAsync(host_scores_buf, host_scores.data_ptr(), scores_bytes, cudaMemcpyDeviceToHost, sstream);
+        cudaStreamSynchronize(sstream);
+        scores_ptr = host_scores_buf;
+    }
+    openfish_decode_cpu_beam(T, N, C, nthreads, scores_ptr, sdt, sscale, state_len,
                              &core->decoder_opts, gpubuf, &moves, &sequence, &qstring);
     write_chunk_outputs(chunks, 0, N, T, moves, sequence, qstring);
     free(moves);
     free(sequence);
     free(qstring);
+    if (host_scores_buf) free(host_scores_buf);
 }
 #endif
 

@@ -19,6 +19,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -272,9 +274,31 @@ static void decode_stage(pipeline_ctx_t *ctx) {
             // data_ptr() points at row n0 -- exactly what the openfish scan/beam expect for nt rows.
             // (For int8, scan_scores and beam_scores alias the same managed buffer.)
             double s0 = realtime();
+            // Jetson (ConcurrentManagedAccess=0): the CPU cannot dereference GPU-written managed
+            // pages while any GPU kernel is running -- the runner's inference runs concurrently on
+            // another stream, so a plain memcpy of gpubuf->bwd/post (and the beam worker threads
+            // reading the managed buffer) would SIGSEGV, and cudaMemAttachHost is not honoured on
+            // Tegra. Use a CUDA D2H copy on the scan stream: the driver/copy-engine reads the managed
+            // pages (no CPU deref), then the CPU beam reads the plain host buffers, which are safe
+            // regardless of GPU activity. No device-wide sync, so inference/decode overlap is kept;
+            // cost is one D2H copy per tile (fast shared-DRAM on Tegra).
+            cudaStream_t sstream = gpubuf->stream ? (cudaStream_t)gpubuf->stream : (cudaStream_t)0;
             basecall_scan_gpu(core, gpubuf, di.scan_scores.narrow(0, n0, nt));
             double s1 = realtime();
-            basecall_beam_cpu(core, gpubuf, di.beam_scores.narrow(0, n0, nt), ptrs);
+            const size_t gpubytes = (size_t)nt * (size_t)(core->chunk_size / core->model_stride + 1)
+                                    * (size_t)(1 << (2 * core->model_config->state_len)) * sizeof(float);
+            float *host_bwd  = (float *)malloc(gpubytes);
+            float *host_post = (float *)malloc(gpubytes);
+            if (!host_bwd || !host_post) { ERROR("%s", "OOM allocating host scan buffers"); exit(EXIT_FAILURE); }
+            cudaMemcpyAsync(host_bwd,  gpubuf->bwd_NTC,  gpubytes, cudaMemcpyDeviceToHost, sstream);
+            cudaMemcpyAsync(host_post, gpubuf->post_NTC, gpubytes, cudaMemcpyDeviceToHost, sstream);
+            cudaStreamSynchronize(sstream);
+            openfish_gpubuf_t hostgpubuf = *gpubuf;
+            hostgpubuf.bwd_NTC  = host_bwd;
+            hostgpubuf.post_NTC = host_post;
+            basecall_beam_cpu(core, &hostgpubuf, di.beam_scores.narrow(0, n0, nt), ptrs);
+            free(host_bwd);
+            free(host_post);
             ctx->t_scan += s1 - s0;
             ctx->t_beam += realtime() - s1;
         }
