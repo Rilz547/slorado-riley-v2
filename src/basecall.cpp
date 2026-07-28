@@ -309,7 +309,14 @@ static void call_chunks(
     
     LOG_DEBUG("%s", "basecalling chunks");
     ts->time_infer -= realtime();
-    auto scores = runner->module->forward(runner->input_tensor.to(runner->tensor_opts.device()));
+    /* Narrow the fixed [C,1,chunk_size] input buffer to the N real chunks before forward, so the
+       GPU only infers/decodes N slots instead of the full C (tail/partial batches no longer pad).
+       --fixed-c-batch=yes disables this to reproduce the original full-C padded behaviour. */
+    const int64_t N = (int64_t)chunks.size();
+    torch::Tensor input = (core->opt.flag & SLORADO_FIXED_C_BATCH)
+                          ? runner->input_tensor
+                          : runner->input_tensor.narrow(0, 0, N);
+    auto scores = runner->module->forward(input.to(runner->tensor_opts.device()));
 #ifdef USE_GPU
     if (runner->device != "cpu") torch::cuda::synchronize(runner->device_idx);
 #endif
@@ -585,7 +592,11 @@ static void basecall_chunks_overlap(
     torch::Tensor scores_NTC;
     {
         c10::cuda::CUDAStreamGuard infer_guard(*runner->infer_stream);
-        auto scores = runner->module->forward(runner_input_slot(runner, slot).to(runner->tensor_opts.device()));
+        const int64_t N = (int64_t)chunks.size();
+        torch::Tensor slot_input = (core->opt.flag & SLORADO_FIXED_C_BATCH)
+                                  ? runner_input_slot(runner, slot)
+                                  : runner_input_slot(runner, slot).narrow(0, 0, N);
+        auto scores = runner->module->forward(slot_input.to(runner->tensor_opts.device()));
         scores_NTC = scores.contiguous(); // NTC for openfish
         cudaError_t err = cudaEventRecord(runner->infer_event[slot], runner->infer_stream->stream());
         if (err != cudaSuccess) {
@@ -645,6 +656,11 @@ static void* pthread_single_basecall(void* voidargs) {
     const size_t end = args->end;
     opt_t opt = core->opt;
     runner_t* runner = (*core->runners)[runner_idx];
+    runner_stat_t* ts = (*core->runner_stats)[runner_idx];
+    const size_t C = (size_t)opt.gpu_batch_size;
+    /* streaming-sim: flush at flush_threshold if set and <= C, else pack full C-wide batches. */
+    const size_t flush_thr = (opt.flush_threshold > 0 && (size_t)opt.flush_threshold <= C)
+                             ? (size_t)opt.flush_threshold : C;
 
     std::vector<basecall_chunk_t *> chunks;
 #ifdef USE_GPU
@@ -657,21 +673,34 @@ static void* pthread_single_basecall(void* voidargs) {
     const bool use_overlap = false;
 #endif
 
+    /* Dispatch a (possibly partial) GPU batch of N=ch.size() real chunks. The GPU launch is always
+       C-wide; slots N..C-1 are padded and their work discarded. Counted as load-imbalance waste. */
+    auto dispatch = [&](std::vector<basecall_chunk_t *> &ch) {
+        const size_t N = ch.size();
+        ts->total_batches++;
+        ts->total_chunks_processed += N;
+        if (N < C) {
+            ts->tail_batches++;
+            ts->padded_slots += C - N;
+        }
+#ifdef USE_GPU
+        if (use_overlap) {
+            basecall_chunks_overlap(core, runner_idx, ch, &pending);
+        } else
+#endif
+        {
+            basecall_chunks(core, runner_idx, ch);
+        }
+    };
+
     for (size_t read_idx = start; read_idx < end; ++read_idx) {
         auto& db_chunks = (*db->basecall_chunks)[read_idx];
 
         for (size_t chunk_idx = 0; chunk_idx < db_chunks.size(); ++chunk_idx) {
             chunks.push_back(&db_chunks[chunk_idx]);
 
-            if (chunks.size() == (size_t)opt.gpu_batch_size) {
-#ifdef USE_GPU
-                if (use_overlap) {
-                    basecall_chunks_overlap(core, runner_idx, chunks, &pending);
-                } else
-#endif
-                {
-                    basecall_chunks(core, runner_idx, chunks);
-                }
+            if (chunks.size() >= flush_thr) {
+                dispatch(chunks);
                 chunks.clear();
             }
         }
@@ -679,14 +708,7 @@ static void* pthread_single_basecall(void* voidargs) {
 
     // leftover chunks
     if (chunks.size() > 0) {
-#ifdef USE_GPU
-        if (use_overlap) {
-            basecall_chunks_overlap(core, runner_idx, chunks, &pending);
-        } else
-#endif
-        {
-            basecall_chunks(core, runner_idx, chunks);
-        }
+        dispatch(chunks);
     }
 
 #ifdef USE_GPU

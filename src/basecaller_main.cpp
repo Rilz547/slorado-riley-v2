@@ -135,6 +135,8 @@ static struct option long_options[] = {
     {"flash", required_argument, 0, 0},             //16 toggles flash attention when possible
     {"mod", required_argument, 0, 0},               //17 detect modified bases
     {"overlap-decode", required_argument, 0, 0},    //18 overlap GPU inference with decode
+    {"flush-threshold", required_argument, 0, 0},  //19 streaming-sim: flush partial GPU batch at N chunks (0 => full C)
+    {"fixed-c-batch", required_argument, 0, 0},    //20 disable narrow: always launch full C-wide batches (pad partials)
     {0, 0, 0, 0}};
 
 
@@ -155,6 +157,8 @@ static inline void print_help_msg(FILE *fp_help, opt_t opt){
     fprintf(fp_help, "  -h                          shows help message and exits\n");
     fprintf(fp_help, "  --flash=yes|no              use flash attention for better performance [%s]\n", (opt.flag & SLORADO_FLASH) ? "yes" : "no");
     fprintf(fp_help, "  --overlap-decode=yes|no     overlap GPU inference with decode [%s]\n", (opt.flag & SLORADO_OVERLAP_DECODE) ? "yes" : "no");
+    fprintf(fp_help, "  --flush-threshold INT      streaming-sim: flush a GPU batch once N chunks are queued [%d] (0 => full C)\n", opt.flush_threshold > 0 ? opt.flush_threshold : opt.gpu_batch_size);
+    fprintf(fp_help, "  --fixed-c-batch=yes|no     disable narrow: always launch full C-wide batches, padding partials [%s]\n", (opt.flag & SLORADO_FIXED_C_BATCH) ? "yes" : "no");
     fprintf(fp_help, "  --mod STR                   detect modified bases (5mCG_5hmCG@v3) [%s]\n", opt.mod ? opt.mod : "NULL");
     fprintf(fp_help, "  --verbose INT               verbosity level [%d]\n",(int)get_log_level());
     fprintf(fp_help, "  --version                   print version\n");
@@ -249,6 +253,14 @@ int basecaller_main(int argc, char* argv[]) {
             opt.mod = optarg;
         } else if (c == 0 && longindex == 18) { // overlap infer/decode
             yes_or_no(&opt.flag, SLORADO_OVERLAP_DECODE, long_options[longindex].name, optarg, 1);
+        } else if (c == 0 && longindex == 19) { // streaming-sim flush threshold
+            opt.flush_threshold = atoi(optarg);
+            if (opt.flush_threshold < 0) {
+                ERROR("flush-threshold should be >= 0 (0 means use gpu batch size). You entered %d", opt.flush_threshold);
+                exit(EXIT_FAILURE);
+            }
+        } else if (c == 0 && longindex == 20) { // fixed-C batch (disable narrow)
+            yes_or_no(&opt.flag, SLORADO_FIXED_C_BATCH, long_options[longindex].name, optarg, 1);
         }
     }
 
@@ -314,6 +326,8 @@ int basecaller_main(int argc, char* argv[]) {
     fprintf(stderr,"no. threads:        %d\n", opt.num_thread);
     fprintf(stderr,"overlap:            %d\n", opt.overlap);
     fprintf(stderr,"overlap decode:     %s\n", (opt.flag & SLORADO_OVERLAP_DECODE) ? "yes" : "no");
+    fprintf(stderr,"fixed-c batch:      %s\n", (opt.flag & SLORADO_FIXED_C_BATCH) ? "yes (no narrow)" : "no (narrow partials)");
+    fprintf(stderr,"flush threshold:    %d%s\n", opt.flush_threshold > 0 ? opt.flush_threshold : opt.gpu_batch_size, opt.flush_threshold > 0 ? "" : " (full batch)");
     fprintf(stderr, "\n");
 
     if ((opt.flag & SLORADO_OVERLAP_DECODE) && strcmp(opt.device, "cpu") == 0) {
@@ -479,6 +493,20 @@ int basecaller_main(int argc, char* argv[]) {
         profile_print(PROFILE_COLOUR_BASECALL, "\n[%s]             - modcall: %.3f sec", __func__, runner_stats[i]->time_modcall);
         // profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]             - total data points copied: %lu", __func__, runner_stats[i]->total_dp);
     }
+
+    /* load-imbalance summary: GPU always launches -C-wide batches; tail batches waste (C-N) slots. */
+    uint64_t tot_batches = 0, tot_tail = 0, tot_padded = 0, tot_real = 0;
+    for (size_t i = 0; i < runner_stats.size(); ++i) {
+        tot_batches += runner_stats[i]->total_batches;
+        tot_tail    += runner_stats[i]->tail_batches;
+        tot_padded  += runner_stats[i]->padded_slots;
+        tot_real    += runner_stats[i]->total_chunks_processed;
+    }
+    uint64_t tot_gpu_slots = tot_real + tot_padded; /* slots actually launched on GPU */
+    double pad_pct = tot_gpu_slots ? (100.0 * (double)tot_padded / (double)tot_gpu_slots) : 0.0;
+    profile_print(PROFILE_COLOUR_SUMMARY,
+        "\n[%s] load-imbalance: %lu GPU batches (%lu tail), %lu real chunks, %lu padded slots -> %.1f%% of %lu launched GPU slots wasted on padding",
+        __func__, tot_batches, tot_tail, tot_real, tot_padded, pad_pct, tot_gpu_slots);
     profile_print(PROFILE_COLOUR_PIPELINE, "\n[%s]     - postprocess: %.3f sec", __func__, core->time_postproc);
     profile_print(PROFILE_COLOUR_PIPELINE, "\n[%s]     - mod_preprocess: %.3f sec", __func__, core->time_preproc_mod);
     // profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]         - seq_to_sig_map: %.3f sec", __func__, core->time_seq_to_sig_map);

@@ -60,6 +60,7 @@ SOFTWARE.
 #define SLORADO_SAM         0x004 // emit sam enable
 #define SLORADO_FLASH       0x008 // flash attention enable
 #define SLORADO_OVERLAP_DECODE 0x010 // overlap GPU infer with decode
+#define SLORADO_FIXED_C_BATCH 0x020 // disable narrow: always launch full -C-wide GPU batches (pad partial batches with dummy slots)
 
 #define WORK_STEAL 1 // simple work stealing enabled or not (no work stealing mean no load balancing)
 #define STEAL_THRESH 1 // stealing threshold
@@ -75,6 +76,8 @@ typedef struct {
 
     int32_t num_thread;         // number of threads used: t
     int32_t debug_break;
+
+    int32_t flush_threshold;    // streaming-sim: flush a GPU batch once >= this many chunks are queued (0 => use gpu_batch_size, i.e. pack full C-wide batches)
 
     const char *out_path;       // path to output file: o
     FILE *out;
@@ -232,6 +235,14 @@ typedef struct {
     void *model_stats;
 
     uint64_t total_dp;
+
+    /* load-imbalance accounting. The GPU batch is always launched at -C (gpu_batch_size) wide;
+       a tail batch with N<C real chunks pads the remaining C-N slots with zeros/stale data, and
+       those slots are inferred + decoded + D2H-copied then discarded. */
+    uint64_t total_batches;          /* full + tail batches dispatched            */
+    uint64_t tail_batches;            /* batches with N < C                       */
+    uint64_t padded_slots;           /* sum of (C - N) over tail batches         */
+    uint64_t total_chunks_processed; /* sum of N over all batches (real chunks)  */
 } runner_stat_t;
 
 typedef struct runner runner_t;
