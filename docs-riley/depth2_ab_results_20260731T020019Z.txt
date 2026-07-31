@@ -1,0 +1,1123 @@
+# depth2 A/B bench
+# started_utc=20260731T020019Z
+# C=128 c=12288 K=4096 p=150 flush=64 fixed-c=no overlap-decode=yes
+# suite: fast_1k×5, hac_1k×5, fast_20k×2  × depths [1, 2]
+
+=== depth=1 warmup_fast_1k warmup  status=ok  real_s=9.778  cpu_s=4.015  ram_gb=2.555  proc_s=9.505 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.083 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.086 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.080 sec
+[basecaller_main]                         - rnn[3] (forward): 0.086 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.080 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.086 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.080 sec
+[basecaller_main]                         - rnn_out_flip: 0.007 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.029 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.293 sec
+[basecaller_main]                     - scores [N,T,C]: [44, 2048, 256]
+[basecaller_main]                     - bwd_scan: 0.195 sec
+[basecaller_main]                     - beam_search: 3.355 sec
+[basecaller_main]                     - fwd_post_scan: 0.799 sec
+[basecaller_main]                     - qual_data: 0.394 sec
+[basecaller_main]                     - gen_sequence: 0.260 sec
+[basecaller_main]                     - d2h_copy: 0.003 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.026 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.005 sec
+[basecaller_main] data free: 0.009 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.778 sec; CPU time: 4.015 sec; Peak RAM: 2.555 GB
+
+=== depth=2 warmup_fast_1k warmup  status=ok  real_s=9.864  cpu_s=4.117  ram_gb=2.753  proc_s=9.567 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - rnns: 0.962 sec
+[basecaller_main]                         - rnn[0] (reverse): 0.601 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.027 sec  lstm: 0.574 sec
+[basecaller_main]                         - rnn[1] (forward): 0.092 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.085 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.088 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.082 sec
+[basecaller_main]                         - rnn[3] (forward): 0.087 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.081 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.087 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.081 sec
+[basecaller_main]                         - rnn_out_flip: 0.007 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.029 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.890 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.022 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.004 sec
+[basecaller_main] data free: 0.009 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.864 sec; CPU time: 4.117 sec; Peak RAM: 2.753 GB
+
+=== depth=1 fast_1k run=1  status=ok  real_s=9.813  cpu_s=4.064  ram_gb=2.557  proc_s=9.54 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.085 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.089 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.083 sec
+[basecaller_main]                         - rnn[3] (forward): 0.089 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.083 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.088 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.082 sec
+[basecaller_main]                         - rnn_out_flip: 0.007 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.030 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.286 sec
+[basecaller_main]                     - scores [N,T,C]: [44, 2048, 256]
+[basecaller_main]                     - bwd_scan: 0.193 sec
+[basecaller_main]                     - beam_search: 3.347 sec
+[basecaller_main]                     - fwd_post_scan: 0.780 sec
+[basecaller_main]                     - qual_data: 0.389 sec
+[basecaller_main]                     - gen_sequence: 0.254 sec
+[basecaller_main]                     - d2h_copy: 0.003 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.022 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.005 sec
+[basecaller_main] data free: 0.009 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.813 sec; CPU time: 4.064 sec; Peak RAM: 2.557 GB
+
+=== depth=1 fast_1k run=2  status=ok  real_s=9.78  cpu_s=4.101  ram_gb=2.557  proc_s=9.502 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.085 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.089 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.083 sec
+[basecaller_main]                         - rnn[3] (forward): 0.088 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.082 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.089 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.082 sec
+[basecaller_main]                         - rnn_out_flip: 0.007 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.030 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.277 sec
+[basecaller_main]                     - scores [N,T,C]: [44, 2048, 256]
+[basecaller_main]                     - bwd_scan: 0.197 sec
+[basecaller_main]                     - beam_search: 3.351 sec
+[basecaller_main]                     - fwd_post_scan: 0.776 sec
+[basecaller_main]                     - qual_data: 0.393 sec
+[basecaller_main]                     - gen_sequence: 0.257 sec
+[basecaller_main]                     - d2h_copy: 0.003 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.025 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.005 sec
+[basecaller_main] data free: 0.009 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.780 sec; CPU time: 4.101 sec; Peak RAM: 2.557 GB
+
+=== depth=1 fast_1k run=3  status=ok  real_s=9.802  cpu_s=4.083  ram_gb=2.552  proc_s=9.533 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.086 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.091 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.084 sec
+[basecaller_main]                         - rnn[3] (forward): 0.090 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.083 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.090 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.084 sec
+[basecaller_main]                         - rnn_out_flip: 0.007 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.030 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.298 sec
+[basecaller_main]                     - scores [N,T,C]: [44, 2048, 256]
+[basecaller_main]                     - bwd_scan: 0.194 sec
+[basecaller_main]                     - beam_search: 3.353 sec
+[basecaller_main]                     - fwd_post_scan: 0.784 sec
+[basecaller_main]                     - qual_data: 0.393 sec
+[basecaller_main]                     - gen_sequence: 0.257 sec
+[basecaller_main]                     - d2h_copy: 0.003 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.022 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.004 sec
+[basecaller_main] data free: 0.009 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.802 sec; CPU time: 4.083 sec; Peak RAM: 2.552 GB
+
+=== depth=1 fast_1k run=4  status=ok  real_s=9.808  cpu_s=4.089  ram_gb=2.552  proc_s=9.538 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.088 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.092 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.085 sec
+[basecaller_main]                         - rnn[3] (forward): 0.092 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.085 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.091 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.084 sec
+[basecaller_main]                         - rnn_out_flip: 0.007 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.031 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.280 sec
+[basecaller_main]                     - scores [N,T,C]: [44, 2048, 256]
+[basecaller_main]                     - bwd_scan: 0.198 sec
+[basecaller_main]                     - beam_search: 3.351 sec
+[basecaller_main]                     - fwd_post_scan: 0.799 sec
+[basecaller_main]                     - qual_data: 0.392 sec
+[basecaller_main]                     - gen_sequence: 0.260 sec
+[basecaller_main]                     - d2h_copy: 0.003 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.032 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.004 sec
+[basecaller_main] data free: 0.010 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.808 sec; CPU time: 4.089 sec; Peak RAM: 2.552 GB
+
+=== depth=1 fast_1k run=5  status=ok  real_s=9.764  cpu_s=4.083  ram_gb=2.55  proc_s=9.491 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.086 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.089 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.083 sec
+[basecaller_main]                         - rnn[3] (forward): 0.089 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.082 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.089 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.082 sec
+[basecaller_main]                         - rnn_out_flip: 0.007 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.030 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.279 sec
+[basecaller_main]                     - scores [N,T,C]: [44, 2048, 256]
+[basecaller_main]                     - bwd_scan: 0.196 sec
+[basecaller_main]                     - beam_search: 3.345 sec
+[basecaller_main]                     - fwd_post_scan: 0.799 sec
+[basecaller_main]                     - qual_data: 0.392 sec
+[basecaller_main]                     - gen_sequence: 0.256 sec
+[basecaller_main]                     - d2h_copy: 0.003 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.022 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.005 sec
+[basecaller_main] data free: 0.009 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.764 sec; CPU time: 4.083 sec; Peak RAM: 2.550 GB
+
+=== depth=1 hac_1k run=1  status=ok  real_s=49.142  cpu_s=47.129  ram_gb=3.078  proc_s=48.669 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.007 sec  lstm: 7.290 sec
+[basecaller_main]                         - rnn[2] (reverse): 7.302 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.296 sec
+[basecaller_main]                         - rnn[3] (forward): 7.301 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.296 sec
+[basecaller_main]                         - rnn[4] (reverse): 7.302 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.005 sec  lstm: 7.297 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - crf_1: 0.188 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 1024]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.023 sec
+[basecaller_main]                 - decode: 46.768 sec
+[basecaller_main]                     - scores [N,T,C]: [44, 2048, 1024]
+[basecaller_main]                     - bwd_scan: 0.790 sec
+[basecaller_main]                     - beam_search: 3.396 sec
+[basecaller_main]                     - fwd_post_scan: 1.602 sec
+[basecaller_main]                     - qual_data: 1.236 sec
+[basecaller_main]                     - gen_sequence: 1.909 sec
+[basecaller_main]                     - d2h_copy: 0.004 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.022 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.005 sec
+[basecaller_main] data free: 0.011 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 49.142 sec; CPU time: 47.129 sec; Peak RAM: 3.078 GB
+
+=== depth=1 hac_1k run=2  status=ok  real_s=49.373  cpu_s=47.483  ram_gb=3.078  proc_s=48.997 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.007 sec  lstm: 7.352 sec
+[basecaller_main]                         - rnn[2] (reverse): 7.347 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.341 sec
+[basecaller_main]                         - rnn[3] (forward): 7.358 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.005 sec  lstm: 7.353 sec
+[basecaller_main]                         - rnn[4] (reverse): 7.373 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.005 sec  lstm: 7.367 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - crf_1: 0.186 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 1024]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.022 sec
+[basecaller_main]                 - decode: 47.162 sec
+[basecaller_main]                     - scores [N,T,C]: [44, 2048, 1024]
+[basecaller_main]                     - bwd_scan: 0.804 sec
+[basecaller_main]                     - beam_search: 3.430 sec
+[basecaller_main]                     - fwd_post_scan: 1.613 sec
+[basecaller_main]                     - qual_data: 1.233 sec
+[basecaller_main]                     - gen_sequence: 1.975 sec
+[basecaller_main]                     - d2h_copy: 0.004 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.025 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.006 sec
+[basecaller_main] data free: 0.010 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 49.373 sec; CPU time: 47.483 sec; Peak RAM: 3.078 GB
+
+=== depth=1 hac_1k run=3  status=ok  real_s=49.351  cpu_s=47.44  ram_gb=3.077  proc_s=48.978 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.007 sec  lstm: 7.325 sec
+[basecaller_main]                         - rnn[2] (reverse): 7.318 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.312 sec
+[basecaller_main]                         - rnn[3] (forward): 7.366 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.360 sec
+[basecaller_main]                         - rnn[4] (reverse): 7.320 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.315 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - crf_1: 0.187 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 1024]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.023 sec
+[basecaller_main]                 - decode: 47.112 sec
+[basecaller_main]                     - scores [N,T,C]: [44, 2048, 1024]
+[basecaller_main]                     - bwd_scan: 0.784 sec
+[basecaller_main]                     - beam_search: 3.439 sec
+[basecaller_main]                     - fwd_post_scan: 1.606 sec
+[basecaller_main]                     - qual_data: 1.162 sec
+[basecaller_main]                     - gen_sequence: 2.123 sec
+[basecaller_main]                     - d2h_copy: 0.004 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.018 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.004 sec
+[basecaller_main] data free: 0.010 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 49.351 sec; CPU time: 47.440 sec; Peak RAM: 3.077 GB
+
+=== depth=1 hac_1k run=4  status=ok  real_s=49.469  cpu_s=47.626  ram_gb=3.073  proc_s=49.084 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.007 sec  lstm: 7.373 sec
+[basecaller_main]                         - rnn[2] (reverse): 7.373 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.366 sec
+[basecaller_main]                         - rnn[3] (forward): 7.379 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.373 sec
+[basecaller_main]                         - rnn[4] (reverse): 7.391 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.385 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - crf_1: 0.188 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 1024]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.023 sec
+[basecaller_main]                 - decode: 47.231 sec
+[basecaller_main]                     - scores [N,T,C]: [44, 2048, 1024]
+[basecaller_main]                     - bwd_scan: 0.795 sec
+[basecaller_main]                     - beam_search: 3.438 sec
+[basecaller_main]                     - fwd_post_scan: 1.606 sec
+[basecaller_main]                     - qual_data: 1.215 sec
+[basecaller_main]                     - gen_sequence: 1.965 sec
+[basecaller_main]                     - d2h_copy: 0.004 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.019 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.006 sec
+[basecaller_main] data free: 0.010 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 49.469 sec; CPU time: 47.626 sec; Peak RAM: 3.073 GB
+
+=== depth=1 hac_1k run=5  status=ok  real_s=49.305  cpu_s=47.446  ram_gb=3.082  proc_s=48.931 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.008 sec  lstm: 7.339 sec
+[basecaller_main]                         - rnn[2] (reverse): 7.328 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.322 sec
+[basecaller_main]                         - rnn[3] (forward): 7.382 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.377 sec
+[basecaller_main]                         - rnn[4] (reverse): 7.332 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.326 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - crf_1: 0.188 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 1024]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.023 sec
+[basecaller_main]                 - decode: 47.104 sec
+[basecaller_main]                     - scores [N,T,C]: [44, 2048, 1024]
+[basecaller_main]                     - bwd_scan: 0.784 sec
+[basecaller_main]                     - beam_search: 3.426 sec
+[basecaller_main]                     - fwd_post_scan: 1.601 sec
+[basecaller_main]                     - qual_data: 1.169 sec
+[basecaller_main]                     - gen_sequence: 2.040 sec
+[basecaller_main]                     - d2h_copy: 0.004 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.018 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.005 sec
+[basecaller_main] data free: 0.009 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 49.305 sec; CPU time: 47.446 sec; Peak RAM: 3.082 GB
+
+=== depth=1 fast_20k run=1  status=ok  real_s=173.971  cpu_s=43.866  ram_gb=4.441  proc_s=171.118 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_20k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.134 sec  lstm: 1.681 sec
+[basecaller_main]                         - rnn[2] (reverse): 1.764 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.124 sec  lstm: 1.640 sec
+[basecaller_main]                         - rnn[3] (forward): 1.751 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.122 sec  lstm: 1.629 sec
+[basecaller_main]                         - rnn[4] (reverse): 1.750 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.121 sec  lstm: 1.629 sec
+[basecaller_main]                         - rnn_out_flip: 0.129 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.426 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.078 sec
+[basecaller_main]                 - decode: 160.913 sec
+[basecaller_main]                     - scores [N,T,C]: [9, 2048, 256]
+[basecaller_main]                     - bwd_scan: 3.841 sec
+[basecaller_main]                     - beam_search: 66.993 sec
+[basecaller_main]                     - fwd_post_scan: 16.050 sec
+[basecaller_main]                     - qual_data: 7.898 sec
+[basecaller_main]                     - gen_sequence: 5.212 sec
+[basecaller_main]                     - d2h_copy: 0.068 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 1598 GPU batches (1598 tail), 102089 real chunks, 102455 padded slots -> 50.1% of 204544 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.262 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.120 sec
+[basecaller_main] data free: 0.078 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_20k.blow5
+[main] Real time: 173.971 sec; CPU time: 43.866 sec; Peak RAM: 4.441 GB
+
+=== depth=1 fast_20k run=2  status=ok  real_s=171.892  cpu_s=43.599  ram_gb=4.451  proc_s=170.968 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_20k.blow5
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.137 sec  lstm: 1.703 sec
+[basecaller_main]                         - rnn[2] (reverse): 1.789 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.128 sec  lstm: 1.661 sec
+[basecaller_main]                         - rnn[3] (forward): 1.778 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.125 sec  lstm: 1.653 sec
+[basecaller_main]                         - rnn[4] (reverse): 1.783 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.125 sec  lstm: 1.657 sec
+[basecaller_main]                         - rnn_out_flip: 0.134 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.438 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.085 sec
+[basecaller_main]                 - decode: 161.129 sec
+[basecaller_main]                     - scores [N,T,C]: [9, 2048, 256]
+[basecaller_main]                     - bwd_scan: 3.851 sec
+[basecaller_main]                     - beam_search: 67.019 sec
+[basecaller_main]                     - fwd_post_scan: 16.029 sec
+[basecaller_main]                     - qual_data: 7.831 sec
+[basecaller_main]                     - gen_sequence: 5.198 sec
+[basecaller_main]                     - d2h_copy: 0.069 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 1598 GPU batches (1598 tail), 102089 real chunks, 102455 padded slots -> 50.1% of 204544 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.263 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.122 sec
+[basecaller_main] data free: 0.077 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=1 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_20k.blow5
+[main] Real time: 171.892 sec; CPU time: 43.599 sec; Peak RAM: 4.451 GB
+
+=== depth=2 fast_1k run=1  status=ok  real_s=9.835  cpu_s=4.153  ram_gb=2.755  proc_s=9.537 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - rnns: 0.964 sec
+[basecaller_main]                         - rnn[0] (reverse): 0.609 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.027 sec  lstm: 0.583 sec
+[basecaller_main]                         - rnn[1] (forward): 0.090 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.083 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.087 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.081 sec
+[basecaller_main]                         - rnn[3] (forward): 0.085 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.079 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.085 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.079 sec
+[basecaller_main]                         - rnn_out_flip: 0.007 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.030 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.903 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.022 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.005 sec
+[basecaller_main] data free: 0.009 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.835 sec; CPU time: 4.153 sec; Peak RAM: 2.755 GB
+
+=== depth=2 fast_1k run=2  status=ok  real_s=9.851  cpu_s=4.108  ram_gb=2.753  proc_s=9.539 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - rnns: 0.964 sec
+[basecaller_main]                         - rnn[0] (reverse): 0.616 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.027 sec  lstm: 0.589 sec
+[basecaller_main]                         - rnn[1] (forward): 0.088 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.081 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.085 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.079 sec
+[basecaller_main]                         - rnn[3] (forward): 0.084 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.078 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.083 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.078 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.030 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.912 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.022 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.005 sec
+[basecaller_main] data free: 0.010 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.851 sec; CPU time: 4.108 sec; Peak RAM: 2.753 GB
+
+=== depth=2 fast_1k run=3  status=ok  real_s=9.828  cpu_s=4.09  ram_gb=2.748  proc_s=9.535 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - rnns: 0.969 sec
+[basecaller_main]                         - rnn[0] (reverse): 0.619 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.027 sec  lstm: 0.592 sec
+[basecaller_main]                         - rnn[1] (forward): 0.089 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.082 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.085 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.079 sec
+[basecaller_main]                         - rnn[3] (forward): 0.084 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.078 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.085 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.079 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.030 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.920 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.024 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.006 sec
+[basecaller_main] data free: 0.010 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.828 sec; CPU time: 4.090 sec; Peak RAM: 2.748 GB
+
+=== depth=2 fast_1k run=4  status=ok  real_s=9.846  cpu_s=4.115  ram_gb=2.749  proc_s=9.553 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - rnns: 0.985 sec
+[basecaller_main]                         - rnn[0] (reverse): 0.631 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.027 sec  lstm: 0.605 sec
+[basecaller_main]                         - rnn[1] (forward): 0.090 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.083 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.087 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.081 sec
+[basecaller_main]                         - rnn[3] (forward): 0.085 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.079 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.085 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.079 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.030 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.919 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.023 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.005 sec
+[basecaller_main] data free: 0.010 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.846 sec; CPU time: 4.115 sec; Peak RAM: 2.749 GB
+
+=== depth=2 fast_1k run=5  status=ok  real_s=9.868  cpu_s=4.117  ram_gb=2.756  proc_s=9.565 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - rnns: 0.988 sec
+[basecaller_main]                         - rnn[0] (reverse): 0.634 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.027 sec  lstm: 0.607 sec
+[basecaller_main]                         - rnn[1] (forward): 0.090 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.007 sec  lstm: 0.083 sec
+[basecaller_main]                         - rnn[2] (reverse): 0.086 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.080 sec
+[basecaller_main]                         - rnn[3] (forward): 0.086 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.080 sec
+[basecaller_main]                         - rnn[4] (reverse): 0.086 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.006 sec  lstm: 0.080 sec
+[basecaller_main]                         - rnn_out_flip: 0.007 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.031 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.004 sec
+[basecaller_main]                 - decode: 8.926 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.027 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.005 sec
+[basecaller_main] data free: 0.010 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 9.868 sec; CPU time: 4.117 sec; Peak RAM: 2.756 GB
+
+=== depth=2 hac_1k run=1  status=ok  real_s=49.784  cpu_s=47.9  ram_gb=3.9  proc_s=49.193 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - rnns: 44.363 sec
+[basecaller_main]                         - rnn[0] (reverse): 14.975 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.018 sec  lstm: 14.957 sec
+[basecaller_main]                         - rnn[1] (forward): 7.354 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.007 sec  lstm: 7.346 sec
+[basecaller_main]                         - rnn[2] (reverse): 7.332 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.326 sec
+[basecaller_main]                         - rnn[3] (forward): 7.357 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.351 sec
+[basecaller_main]                         - rnn[4] (reverse): 7.338 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.332 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - crf_1: 0.271 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 1024]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.022 sec
+[basecaller_main]                 - decode: 48.647 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.024 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.004 sec
+[basecaller_main] data free: 0.009 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 49.784 sec; CPU time: 47.900 sec; Peak RAM: 3.900 GB
+
+=== depth=2 hac_1k run=2  status=ok  real_s=49.648  cpu_s=47.788  ram_gb=3.905  proc_s=49.053 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - rnns: 44.224 sec
+[basecaller_main]                         - rnn[0] (reverse): 14.947 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.019 sec  lstm: 14.928 sec
+[basecaller_main]                         - rnn[1] (forward): 7.291 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.007 sec  lstm: 7.284 sec
+[basecaller_main]                         - rnn[2] (reverse): 7.351 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.345 sec
+[basecaller_main]                         - rnn[3] (forward): 7.311 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.305 sec
+[basecaller_main]                         - rnn[4] (reverse): 7.318 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.312 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - crf_1: 0.266 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 1024]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.022 sec
+[basecaller_main]                 - decode: 48.509 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.023 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.004 sec
+[basecaller_main] data free: 0.011 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 49.648 sec; CPU time: 47.788 sec; Peak RAM: 3.905 GB
+
+=== depth=2 hac_1k run=3  status=ok  real_s=49.765  cpu_s=47.943  ram_gb=3.902  proc_s=49.167 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - rnns: 44.367 sec
+[basecaller_main]                         - rnn[0] (reverse): 15.004 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.020 sec  lstm: 14.984 sec
+[basecaller_main]                         - rnn[1] (forward): 7.324 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.007 sec  lstm: 7.317 sec
+[basecaller_main]                         - rnn[2] (reverse): 7.347 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.341 sec
+[basecaller_main]                         - rnn[3] (forward): 7.325 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.319 sec
+[basecaller_main]                         - rnn[4] (reverse): 7.360 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.354 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - crf_1: 0.268 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 1024]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.023 sec
+[basecaller_main]                 - decode: 48.633 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.023 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.005 sec
+[basecaller_main] data free: 0.010 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 49.765 sec; CPU time: 47.943 sec; Peak RAM: 3.902 GB
+
+=== depth=2 hac_1k run=4  status=ok  real_s=49.539  cpu_s=47.73  ram_gb=3.905  proc_s=48.934 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - rnns: 44.109 sec
+[basecaller_main]                         - rnn[0] (reverse): 14.864 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.019 sec  lstm: 14.845 sec
+[basecaller_main]                         - rnn[1] (forward): 7.311 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.007 sec  lstm: 7.304 sec
+[basecaller_main]                         - rnn[2] (reverse): 7.310 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.304 sec
+[basecaller_main]                         - rnn[3] (forward): 7.315 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.309 sec
+[basecaller_main]                         - rnn[4] (reverse): 7.303 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.297 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - crf_1: 0.269 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 1024]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.023 sec
+[basecaller_main]                 - decode: 48.394 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.028 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.006 sec
+[basecaller_main] data free: 0.011 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 49.539 sec; CPU time: 47.730 sec; Peak RAM: 3.905 GB
+
+=== depth=2 hac_1k run=5  status=ok  real_s=49.584  cpu_s=47.791  ram_gb=3.91  proc_s=48.978 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - rnns: 44.148 sec
+[basecaller_main]                         - rnn[0] (reverse): 14.895 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.019 sec  lstm: 14.876 sec
+[basecaller_main]                         - rnn[1] (forward): 7.296 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.007 sec  lstm: 7.289 sec
+[basecaller_main]                         - rnn[2] (reverse): 7.313 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.307 sec
+[basecaller_main]                         - rnn[3] (forward): 7.310 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.304 sec
+[basecaller_main]                         - rnn[4] (reverse): 7.327 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                             flip: 0.006 sec  lstm: 7.322 sec
+[basecaller_main]                         - rnn_out_flip: 0.006 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 384]
+[basecaller_main]                     - crf_1: 0.267 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 384]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 1024]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.030 sec
+[basecaller_main]                 - decode: 48.416 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 80 GPU batches (80 tail), 5100 real chunks, 5140 padded slots -> 50.2% of 10240 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.028 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.006 sec
+[basecaller_main] data free: 0.011 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_1k.blow5
+[main] Real time: 49.584 sec; CPU time: 47.791 sec; Peak RAM: 3.910 GB
+
+=== depth=2 fast_20k run=1  status=ok  real_s=172.202  cpu_s=42.962  ram_gb=4.704  proc_s=171.35 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_20k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - rnns: 10.089 sec
+[basecaller_main]                         - rnn[0] (reverse): 2.914 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.133 sec  lstm: 2.781 sec
+[basecaller_main]                         - rnn[1] (forward): 1.807 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.134 sec  lstm: 1.673 sec
+[basecaller_main]                         - rnn[2] (reverse): 1.750 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.122 sec  lstm: 1.628 sec
+[basecaller_main]                         - rnn[3] (forward): 1.744 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.121 sec  lstm: 1.623 sec
+[basecaller_main]                         - rnn[4] (reverse): 1.745 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.120 sec  lstm: 1.625 sec
+[basecaller_main]                         - rnn_out_flip: 0.129 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.429 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.079 sec
+[basecaller_main]                 - decode: 162.199 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 1598 GPU batches (1598 tail), 102089 real chunks, 102455 padded slots -> 50.1% of 204544 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.271 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.113 sec
+[basecaller_main] data free: 0.097 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_20k.blow5
+[main] Real time: 172.202 sec; CPU time: 42.962 sec; Peak RAM: 4.704 GB
+
+=== depth=2 fast_20k run=2  status=ok  real_s=172.86  cpu_s=43.514  ram_gb=4.62  proc_s=171.306 ===
+CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_20k.blow5
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - rnns: 10.206 sec
+[basecaller_main]                         - rnn[0] (reverse): 2.890 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.139 sec  lstm: 2.752 sec
+[basecaller_main]                         - rnn[1] (forward): 1.849 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.138 sec  lstm: 1.711 sec
+[basecaller_main]                         - rnn[2] (reverse): 1.790 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.127 sec  lstm: 1.663 sec
+[basecaller_main]                         - rnn[3] (forward): 1.773 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.125 sec  lstm: 1.648 sec
+[basecaller_main]                         - rnn[4] (reverse): 1.772 sec
+[basecaller_main]                             in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                             flip: 0.123 sec  lstm: 1.649 sec
+[basecaller_main]                         - rnn_out_flip: 0.132 sec
+[basecaller_main]                             out [N,T,C]: [64, 2048, 96]
+[basecaller_main]                     - crf_1: 0.443 sec
+[basecaller_main]                         in  [N,T,C]: [64, 2048, 96]
+[basecaller_main]                         out [N,T,C]: [64, 2048, 256]
+[basecaller_main]                     - crf_2: 0.000 sec
+[basecaller_main]                     - clamp: 0.080 sec
+[basecaller_main]                 - decode: 161.935 sec
+[basecaller_main]             - modcall: 0.000 sec
+[basecaller_main] load-imbalance: 1598 GPU batches (1598 tail), 102089 real chunks, 102455 padded slots -> 50.1% of 204544 launched GPU slots wasted on padding
+[basecaller_main]     - postprocess: 0.267 sec
+[basecaller_main]     - mod_preprocess: 0.000 sec
+[basecaller_main]     - mod_postprocess: 0.000 sec
+[basecaller_main] data output: 0.116 sec
+[basecaller_main] data free: 0.081 sec
+[main] Version: 0.5.0-beta
+[main] CMD: /home/riley/slorado-riley-v2/slorado basecaller -C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --overlap-depth=2 --fixed-c-batch=no --flush-threshold 64 -o /dev/null /home/riley/slorado-riley-v2/models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0 /home/riley/slorado-riley-v2/test/PGXXXX230339/reads_20k.blow5
+[main] Real time: 172.860 sec; CPU time: 43.514 sec; Peak RAM: 4.620 GB
+# finished_utc=2026-07-31T02:42:56.205061+00:00 (20k HAC append cancelled and stripped)

@@ -65,6 +65,7 @@ typedef struct {
     torch::Tensor scores_NTC;
     int slot;       // input / infer_event ping-pong index
     int host_slot;  // openfish pinned-host ring index (OPENFISH_HOST_RING)
+    int lane;       // decode lane 0|1 (depth-2: which gpubuf/stream)
     bool active;
     // Set after decode kernels+D2H are queued but before stream sync / write.
     bool decode_launched;
@@ -73,6 +74,16 @@ typedef struct {
     char *qstring;
     int T;
 } overlap_pending_t;
+
+#ifdef USE_GPU
+static openfish_gpubuf_t *runner_gpubuf_lane(runner_t *runner, int lane) {
+    return (lane == 0) ? runner->gpubuf : runner->gpubuf_alt;
+}
+
+static c10::cuda::CUDAStream *runner_decode_stream_lane(runner_t *runner, int lane) {
+    return (lane == 0) ? runner->decode_stream : runner->decode_stream_alt;
+}
+#endif
 
 static torch::Tensor &runner_input_slot(runner_t *runner, int slot) {
     return (slot == 0) ? runner->input_tensor : runner->input_tensor_alt;
@@ -481,8 +492,16 @@ static void overlap_launch_decode(
         return;
     }
 
-    c10::cuda::CUDAStreamGuard decode_guard(*runner->decode_stream);
-    cudaError_t err = cudaStreamWaitEvent(runner->decode_stream->stream(), runner->infer_event[pending->slot], 0);
+    const int lane = (runner->overlap_depth >= 2) ? pending->lane : 0;
+    c10::cuda::CUDAStream *dstream = runner_decode_stream_lane(runner, lane);
+    openfish_gpubuf_t *gbuf = runner_gpubuf_lane(runner, lane);
+    if (dstream == nullptr || gbuf == nullptr) {
+        ERROR("%s", "overlap_launch_decode: missing decode lane resources");
+        exit(EXIT_FAILURE);
+    }
+
+    c10::cuda::CUDAStreamGuard decode_guard(*dstream);
+    cudaError_t err = cudaStreamWaitEvent(dstream->stream(), runner->infer_event[pending->slot], 0);
     if (err != cudaSuccess) {
         ERROR("cudaStreamWaitEvent failed: %s", cudaGetErrorString(err));
         exit(EXIT_FAILURE);
@@ -493,19 +512,31 @@ static void overlap_launch_decode(
     const int C = pending->scores_NTC.size(2);
     const int state_len = core->model_config->state_len;
 
+    /* Depth-2 can have two decodes in flight; openfish phase stats are one-shot — skip them. */
+    openfish_decode_stats_t *stats =
+        (runner->overlap_depth >= 2) ? nullptr : &ts->decode_stats;
+
     openfish_decode_gpu(
         T, N, C,
         pending->scores_NTC.data_ptr(),
         OPENFISH_SCORE_F16, 1.0f, state_len,
         &core->decoder_opts,
-        runner->gpubuf,
+        gbuf,
         &pending->moves,
         &pending->sequence,
         &pending->qstring,
-        &ts->decode_stats,
-        (void *)runner->decode_stream->stream(),
+        stats,
+        (void *)dstream->stream(),
         pending->host_slot
     );
+
+    if (runner->overlap_depth >= 2 && runner->decode_event[lane] != nullptr) {
+        err = cudaEventRecord(runner->decode_event[lane], dstream->stream());
+        if (err != cudaSuccess) {
+            ERROR("cudaEventRecord(decode) failed: %s", cudaGetErrorString(err));
+            exit(EXIT_FAILURE);
+        }
+    }
 
     pending->T = T;
     pending->decode_launched = true;
@@ -521,14 +552,18 @@ static void overlap_sync_decode(
         return;
     }
 
-    cudaError_t err = cudaStreamSynchronize(runner->decode_stream->stream());
+    const int lane = (runner->overlap_depth >= 2) ? pending->lane : 0;
+    c10::cuda::CUDAStream *dstream = runner_decode_stream_lane(runner, lane);
+    cudaError_t err = cudaStreamSynchronize(dstream->stream());
     if (err != cudaSuccess) {
         ERROR("cudaStreamSynchronize(decode) failed: %s", cudaGetErrorString(err));
         exit(EXIT_FAILURE);
     }
 
     /* Must finish before the next decode launch (async timing state is one-shot). */
-    openfish_decode_stats_finish(&ts->decode_stats);
+    if (runner->overlap_depth < 2) {
+        openfish_decode_stats_finish(&ts->decode_stats);
+    }
 }
 
 /* Copy synced host results into chunks; host ring slot may be reused after this returns. */
@@ -628,6 +663,7 @@ static void basecall_chunks_overlap(
     pending->scores_NTC = scores_NTC;
     pending->slot = slot;
     pending->host_slot = had_pending ? (prev.host_slot ^ 1) : 0;
+    pending->lane = 0;
     pending->active = true;
     pending->decode_launched = false;
     pending->moves = nullptr;
@@ -643,6 +679,102 @@ static void basecall_chunks_overlap(
 
     runner->overlap_slot = slot ^ 1;
 
+    ts->time_basecall += realtime();
+}
+
+/* Depth-2: up to two GPU decodes in flight on separate gpubuf/streams. */
+static void basecall_chunks_overlap_depth2(
+    const core_t* core,
+    const int runner_idx,
+    const std::vector<basecall_chunk_t *> &chunks,
+    overlap_pending_t pending[2],
+    int *n_inflight,
+    int *oldest // index of oldest active pending in ring order
+) {
+    runner_stat_t* ts = (*core->runner_stats)[runner_idx];
+    runner_t* runner = (*core->runners)[runner_idx];
+    auto chunk_size = core->chunk_size;
+    const int slot = runner->overlap_slot;
+
+    c10::DeviceGuard device_guard(runner->tensor_opts.device());
+    torch::InferenceMode inference_guard;
+
+    LOG_DEBUG("%s", "accepting chunks (overlap / depth-2)");
+    ts->time_accept -= realtime();
+    for (size_t i = 0; i < chunks.size(); ++i) {
+        accept_chunk(i, chunks[i], runner, chunk_size, slot);
+    }
+    ts->time_accept += realtime();
+
+    ts->time_basecall -= realtime();
+    ts->time_decode -= realtime();
+
+    // Ensure prior stashed batches are launched so infer can overlap up to two decodes.
+    for (int i = 0; i < *n_inflight; ++i) {
+        int idx = (*oldest + i) & 1;
+        overlap_launch_decode(core, runner, ts, &pending[idx]);
+    }
+
+    // Infer current batch while prior decode lane(s) run.
+    ts->time_infer -= realtime();
+    torch::Tensor scores_NTC;
+    {
+        c10::cuda::CUDAStreamGuard infer_guard(*runner->infer_stream);
+        const int64_t N = (int64_t)chunks.size();
+        torch::Tensor slot_input = (core->opt.flag & SLORADO_FIXED_C_BATCH)
+                                  ? runner_input_slot(runner, slot)
+                                  : runner_input_slot(runner, slot).narrow(0, 0, N);
+        auto scores = runner->module->forward(slot_input.to(runner->tensor_opts.device()));
+        scores_NTC = scores.contiguous();
+        cudaError_t err = cudaEventRecord(runner->infer_event[slot], runner->infer_stream->stream());
+        if (err != cudaSuccess) {
+            ERROR("cudaEventRecord failed: %s", cudaGetErrorString(err));
+            exit(EXIT_FAILURE);
+        }
+    }
+    ts->time_infer += realtime();
+
+    // Free a lane if both are busy (sync+write oldest only — other decode keeps running).
+    while (*n_inflight >= 2) {
+        overlap_pending_t *old = &pending[*oldest];
+        overlap_sync_decode(runner, ts, old);
+        overlap_write_decode(old);
+        *oldest = (*oldest + 1) & 1;
+        (*n_inflight)--;
+    }
+
+    bool lane_used[2] = {false, false};
+    for (int i = 0; i < *n_inflight; ++i) {
+        int idx = (*oldest + i) & 1;
+        if (pending[idx].active) {
+            lane_used[pending[idx].lane] = true;
+        }
+    }
+    int lane = lane_used[0] ? 1 : 0;
+    if (lane_used[lane]) {
+        ERROR("%s", "depth-2: no free decode lane");
+        exit(EXIT_FAILURE);
+    }
+
+    const int new_idx = (*oldest + *n_inflight) & 1;
+    overlap_pending_t *np = &pending[new_idx];
+    np->chunks = chunks;
+    np->scores_NTC = scores_NTC;
+    np->slot = slot;
+    np->host_slot = 0; // each gpubuf owns its own pinned hosts
+    np->lane = lane;
+    np->active = true;
+    np->decode_launched = false;
+    np->moves = nullptr;
+    np->sequence = nullptr;
+    np->qstring = nullptr;
+    np->T = 0;
+    (*n_inflight)++;
+
+    overlap_launch_decode(core, runner, ts, np);
+
+    ts->time_decode += realtime();
+    runner->overlap_slot = slot ^ 1;
     ts->time_basecall += realtime();
 }
 #endif
@@ -668,7 +800,14 @@ static void* pthread_single_basecall(void* voidargs) {
     pending.active = false;
     pending.decode_launched = false;
     pending.host_slot = 0;
+    pending.lane = 0;
+    overlap_pending_t pending_d2[2]{};
+    pending_d2[0].active = false;
+    pending_d2[1].active = false;
+    int d2_inflight = 0;
+    int d2_oldest = 0;
     const bool use_overlap = runner->overlap_decode;
+    const bool use_depth2 = use_overlap && runner->overlap_depth >= 2;
 #else
     const bool use_overlap = false;
 #endif
@@ -684,7 +823,9 @@ static void* pthread_single_basecall(void* voidargs) {
             ts->padded_slots += C - N;
         }
 #ifdef USE_GPU
-        if (use_overlap) {
+        if (use_depth2) {
+            basecall_chunks_overlap_depth2(core, runner_idx, ch, pending_d2, &d2_inflight, &d2_oldest);
+        } else if (use_overlap) {
             basecall_chunks_overlap(core, runner_idx, ch, &pending);
         } else
 #endif
@@ -712,7 +853,22 @@ static void* pthread_single_basecall(void* voidargs) {
     }
 
 #ifdef USE_GPU
-    if (use_overlap && pending.active) {
+    if (use_depth2) {
+        runner_stat_t* ts = (*core->runner_stats)[runner_idx];
+        c10::DeviceGuard device_guard(runner->tensor_opts.device());
+        ts->time_basecall -= realtime();
+        ts->time_decode -= realtime();
+        while (d2_inflight > 0) {
+            overlap_pending_t *old = &pending_d2[d2_oldest];
+            overlap_launch_decode(core, runner, ts, old);
+            overlap_sync_decode(runner, ts, old);
+            overlap_write_decode(old);
+            d2_oldest = (d2_oldest + 1) & 1;
+            d2_inflight--;
+        }
+        ts->time_decode += realtime();
+        ts->time_basecall += realtime();
+    } else if (use_overlap && pending.active) {
         runner_stat_t* ts = (*core->runner_stats)[runner_idx];
         c10::DeviceGuard device_guard(runner->tensor_opts.device());
         ts->time_basecall -= realtime();

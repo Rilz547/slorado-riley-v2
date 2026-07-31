@@ -78,6 +78,7 @@ typedef struct {
     int32_t debug_break;
 
     int32_t flush_threshold;    // streaming-sim: flush a GPU batch once >= this many chunks are queued (0 => use gpu_batch_size, i.e. pack full C-wide batches)
+    int32_t overlap_depth;      // 1 = v1.2 (one GPU decode); 2 = dual gpubuf/decode streams (experiment)
 
     const char *out_path;       // path to output file: o
     FILE *out;

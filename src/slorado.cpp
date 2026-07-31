@@ -369,6 +369,7 @@ void init_opt(opt_t* opt) {
 
     opt->chunk_size = 12288;
     opt->overlap = 150;
+    opt->overlap_depth = 1;
 
     opt->out = stdout;
 

@@ -137,6 +137,7 @@ static struct option long_options[] = {
     {"overlap-decode", required_argument, 0, 0},    //18 overlap GPU inference with decode
     {"flush-threshold", required_argument, 0, 0},  //19 streaming-sim: flush partial GPU batch at N chunks (0 => full C)
     {"fixed-c-batch", required_argument, 0, 0},    //20 disable narrow: always launch full C-wide batches (pad partials)
+    {"overlap-depth", required_argument, 0, 0},    //21 1=v1.2 single decode; 2=dual gpubuf decode experiment
     {0, 0, 0, 0}};
 
 
@@ -157,6 +158,7 @@ static inline void print_help_msg(FILE *fp_help, opt_t opt){
     fprintf(fp_help, "  -h                          shows help message and exits\n");
     fprintf(fp_help, "  --flash=yes|no              use flash attention for better performance [%s]\n", (opt.flag & SLORADO_FLASH) ? "yes" : "no");
     fprintf(fp_help, "  --overlap-decode=yes|no     overlap GPU inference with decode [%s]\n", (opt.flag & SLORADO_OVERLAP_DECODE) ? "yes" : "no");
+    fprintf(fp_help, "  --overlap-depth INT         overlap pipeline depth 1 (v1.2) or 2 (dual GPU decode) [%d]\n", opt.overlap_depth);
     fprintf(fp_help, "  --flush-threshold INT      streaming-sim: flush a GPU batch once N chunks are queued [%d] (0 => full C)\n", opt.flush_threshold > 0 ? opt.flush_threshold : opt.gpu_batch_size);
     fprintf(fp_help, "  --fixed-c-batch=yes|no     disable narrow: always launch full C-wide batches, padding partials [%s]\n", (opt.flag & SLORADO_FIXED_C_BATCH) ? "yes" : "no");
     fprintf(fp_help, "  --mod STR                   detect modified bases (5mCG_5hmCG@v3) [%s]\n", opt.mod ? opt.mod : "NULL");
@@ -261,6 +263,12 @@ int basecaller_main(int argc, char* argv[]) {
             }
         } else if (c == 0 && longindex == 20) { // fixed-C batch (disable narrow)
             yes_or_no(&opt.flag, SLORADO_FIXED_C_BATCH, long_options[longindex].name, optarg, 1);
+        } else if (c == 0 && longindex == 21) { // overlap depth 1|2
+            opt.overlap_depth = atoi(optarg);
+            if (opt.overlap_depth != 1 && opt.overlap_depth != 2) {
+                ERROR("overlap-depth must be 1 or 2. You entered %d", opt.overlap_depth);
+                exit(EXIT_FAILURE);
+            }
         }
     }
 
@@ -326,12 +334,17 @@ int basecaller_main(int argc, char* argv[]) {
     fprintf(stderr,"no. threads:        %d\n", opt.num_thread);
     fprintf(stderr,"overlap:            %d\n", opt.overlap);
     fprintf(stderr,"overlap decode:     %s\n", (opt.flag & SLORADO_OVERLAP_DECODE) ? "yes" : "no");
+    fprintf(stderr,"overlap depth:      %d\n", opt.overlap_depth);
     fprintf(stderr,"fixed-c batch:      %s\n", (opt.flag & SLORADO_FIXED_C_BATCH) ? "yes (no narrow)" : "no (narrow partials)");
     fprintf(stderr,"flush threshold:    %d%s\n", opt.flush_threshold > 0 ? opt.flush_threshold : opt.gpu_batch_size, opt.flush_threshold > 0 ? "" : " (full batch)");
     fprintf(stderr, "\n");
 
     if ((opt.flag & SLORADO_OVERLAP_DECODE) && strcmp(opt.device, "cpu") == 0) {
         WARNING("%s", "--overlap-decode is ignored on CPU");
+    }
+    if (opt.overlap_depth == 2 && !(opt.flag & SLORADO_OVERLAP_DECODE)) {
+        WARNING("%s", "--overlap-depth=2 requires --overlap-decode=yes; depth ignored");
+        opt.overlap_depth = 1;
     }
 
 /////////////////////////////////////////////////////////////////////////////

@@ -41,12 +41,16 @@ struct runner {
     torch::nn::ModuleHolder<torch::nn::AnyModule> module{nullptr};
     bool overlap_decode = false;
     int overlap_slot = 0;
+    int overlap_depth = 1; // 1 = v1.2; 2 = dual decode lanes
 #ifdef USE_GPU
     int64_t device_idx;
-    openfish_gpubuf_t *gpubuf;
+    openfish_gpubuf_t *gpubuf = nullptr;      // decode lane 0
+    openfish_gpubuf_t *gpubuf_alt = nullptr;  // decode lane 1 (depth 2 only)
     c10::cuda::CUDAStream *infer_stream = nullptr;
-    c10::cuda::CUDAStream *decode_stream = nullptr;
+    c10::cuda::CUDAStream *decode_stream = nullptr;      // lane 0
+    c10::cuda::CUDAStream *decode_stream_alt = nullptr;  // lane 1 (depth 2)
     cudaEvent_t infer_event[2] = {nullptr, nullptr};
+    cudaEvent_t decode_event[2] = {nullptr, nullptr};
 #endif
 
     // modbase stuff

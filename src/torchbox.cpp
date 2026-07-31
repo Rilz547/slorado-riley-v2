@@ -157,6 +157,7 @@ void init_runner(
         if (!modbase && device != "cpu" && (core->opt.flag & SLORADO_OVERLAP_DECODE)) {
             runner->overlap_decode = true;
             runner->overlap_slot = 0;
+            runner->overlap_depth = (core->opt.overlap_depth >= 2) ? 2 : 1;
             runner->input_tensor_alt = torch::zeros({batch_size, 1, (int64_t)core->chunk_size}, torch::TensorOptions().dtype(dtype).device(torch::kCPU));
             runner->infer_stream = new c10::cuda::CUDAStream(c10::cuda::getStreamFromPool(false, runner->device_idx));
             runner->decode_stream = new c10::cuda::CUDAStream(c10::cuda::getStreamFromPool(false, runner->device_idx));
@@ -167,7 +168,22 @@ void init_runner(
                     exit(EXIT_FAILURE);
                 }
             }
-            LOG_DEBUG("%s", "overlap-decode enabled for runner (infer/decode streams + double input buffer)");
+            if (runner->overlap_depth >= 2) {
+                runner->gpubuf_alt = openfish_gpubuf_init(
+                    core->chunk_size / core->model_stride, batch_size, core->model_config->state_len);
+                runner->decode_stream_alt = new c10::cuda::CUDAStream(
+                    c10::cuda::getStreamFromPool(false, runner->device_idx));
+                for (int i = 0; i < 2; ++i) {
+                    cudaError_t err = cudaEventCreateWithFlags(&runner->decode_event[i], cudaEventDisableTiming);
+                    if (err != cudaSuccess) {
+                        ERROR("cudaEventCreateWithFlags(decode) failed: %s", cudaGetErrorString(err));
+                        exit(EXIT_FAILURE);
+                    }
+                }
+                LOG_DEBUG("%s", "overlap-decode depth=2 (dual gpubuf + dual decode streams)");
+            } else {
+                LOG_DEBUG("%s", "overlap-decode enabled for runner (infer/decode streams + double input buffer)");
+            }
         }
 #endif
     }
@@ -247,17 +263,28 @@ void free_runners(core_t *core) {
 #ifdef USE_GPU
             c10::DeviceGuard device_guard(runner->tensor_opts.device());
             openfish_gpubuf_free(runner->gpubuf);
+            runner->gpubuf = nullptr;
+            if (runner->gpubuf_alt != nullptr) {
+                openfish_gpubuf_free(runner->gpubuf_alt);
+                runner->gpubuf_alt = nullptr;
+            }
             if (runner->overlap_decode) {
                 for (int e = 0; e < 2; ++e) {
                     if (runner->infer_event[e] != nullptr) {
                         cudaEventDestroy(runner->infer_event[e]);
                         runner->infer_event[e] = nullptr;
                     }
+                    if (runner->decode_event[e] != nullptr) {
+                        cudaEventDestroy(runner->decode_event[e]);
+                        runner->decode_event[e] = nullptr;
+                    }
                 }
                 delete runner->infer_stream;
                 delete runner->decode_stream;
+                delete runner->decode_stream_alt;
                 runner->infer_stream = nullptr;
                 runner->decode_stream = nullptr;
+                runner->decode_stream_alt = nullptr;
             }
 #endif
         }
