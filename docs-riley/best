@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Best load-imbalance runs (branch: load-imbalance).
+# Narrow + overlap-decode on; FAST uses flush=64, HAC uses flush=128.
+#
+# Usage (from repo root):
+#   ./docs-riley/best --fast 1k          # → /dev/null
+#   ./docs-riley/best --fast 1k keep     # → output_fast_1k.fastq
+#   ./docs-riley/best --hac 20k keep
+#
+# Args: --fast|--hac   1k|20k   [keep]
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: $0 --fast|--hac 1k|20k [keep]" >&2
+  echo "  omit keep → -o /dev/null" >&2
+  echo "  keep      → -o output_<model>_<size>.fastq" >&2
+  exit 1
+}
+
+[[ $# -ge 2 && $# -le 3 ]] || usage
+
+model_flag="$1"
+size_raw="$2"
+keep="${3:-}"
+
+case "$model_flag" in
+  --fast) model=fast; flush=64 ;;
+  --hac)  model=hac;  flush=128 ;;
+  *) usage ;;
+esac
+
+size="$(echo "$size_raw" | tr '[:upper:]' '[:lower:]')"
+case "$size" in
+  1k|20k) ;;
+  *) usage ;;
+esac
+
+if [[ -n "$keep" && "$keep" != "keep" ]]; then
+  usage
+fi
+
+if [[ "$keep" == "keep" ]]; then
+  out="output_${model}_${size}.fastq"
+else
+  out="/dev/null"
+fi
+
+model_path="models/dna_r10.4.1_e8.2_400bps_${model}@v5.0.0"
+reads="test/PGXXXX230339/reads_${size}.blow5"
+
+echo "model=$model size=$size flush=$flush out=$out"
+exec ./slorado basecaller \
+  -C 128 -c 12288 -K 4096 -p 150 \
+  --overlap-decode=yes \
+  --fixed-c-batch=no \
+  --flush-threshold="$flush" \
+  -o "$out" \
+  "$model_path" \
+  "$reads"
