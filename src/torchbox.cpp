@@ -51,6 +51,7 @@ SOFTWARE.
 #include <c10/core/DeviceGuard.h>
 #include <c10/cuda/CUDAStream.h>
 #include <c10/cuda/CUDAGuard.h>
+#include <c10/cuda/CUDACachingAllocator.h>
 #include <cuda_runtime.h>
 #endif
 
@@ -252,50 +253,167 @@ void init_runners(core_t* core, opt_t *opt, char *model) {
 }
 
 void free_runners(core_t *core) {
-    for (size_t i = 0; i < core->runner_stats->size(); ++i) {
-        free((*core->runner_stats)[i]->model_stats);
-        free((*core->runner_stats)[i]);
+    if (core->runner_stats != nullptr) {
+        for (size_t i = 0; i < core->runner_stats->size(); ++i) {
+            free((*core->runner_stats)[i]->model_stats);
+            free((*core->runner_stats)[i]);
+        }
     }
 
-    for (size_t i = 0; i < core->runners->size(); ++i) {
-        runner_t *runner = (*core->runners)[i];
-        if (runner->device != "cpu") {
+    if (core->runners != nullptr) {
+        for (size_t i = 0; i < core->runners->size(); ++i) {
+            runner_t *runner = (*core->runners)[i];
+            if (runner->device != "cpu") {
 #ifdef USE_GPU
-            c10::DeviceGuard device_guard(runner->tensor_opts.device());
-            openfish_gpubuf_free(runner->gpubuf);
-            runner->gpubuf = nullptr;
-            if (runner->gpubuf_alt != nullptr) {
-                openfish_gpubuf_free(runner->gpubuf_alt);
-                runner->gpubuf_alt = nullptr;
-            }
-            if (runner->overlap_decode) {
-                for (int e = 0; e < 2; ++e) {
-                    if (runner->infer_event[e] != nullptr) {
-                        cudaEventDestroy(runner->infer_event[e]);
-                        runner->infer_event[e] = nullptr;
-                    }
-                    if (runner->decode_event[e] != nullptr) {
-                        cudaEventDestroy(runner->decode_event[e]);
-                        runner->decode_event[e] = nullptr;
-                    }
+                c10::DeviceGuard device_guard(runner->tensor_opts.device());
+                openfish_gpubuf_free(runner->gpubuf);
+                runner->gpubuf = nullptr;
+                if (runner->gpubuf_alt != nullptr) {
+                    openfish_gpubuf_free(runner->gpubuf_alt);
+                    runner->gpubuf_alt = nullptr;
                 }
-                delete runner->infer_stream;
-                delete runner->decode_stream;
-                delete runner->decode_stream_alt;
-                runner->infer_stream = nullptr;
-                runner->decode_stream = nullptr;
-                runner->decode_stream_alt = nullptr;
-            }
+                if (runner->overlap_decode) {
+                    for (int e = 0; e < 2; ++e) {
+                        if (runner->infer_event[e] != nullptr) {
+                            cudaEventDestroy(runner->infer_event[e]);
+                            runner->infer_event[e] = nullptr;
+                        }
+                        if (runner->decode_event[e] != nullptr) {
+                            cudaEventDestroy(runner->decode_event[e]);
+                            runner->decode_event[e] = nullptr;
+                        }
+                    }
+                    delete runner->infer_stream;
+                    delete runner->decode_stream;
+                    delete runner->decode_stream_alt;
+                    runner->infer_stream = nullptr;
+                    runner->decode_stream = nullptr;
+                    runner->decode_stream_alt = nullptr;
+                }
 #endif
-        }
-        delete runner;
+            }
+            delete runner;
 
-        if (core->modbase_config != NULL) {
-            runner_t *mod_runner = (*core->mod_runners)[i];
-            delete mod_runner;
+            if (core->modbase_config != NULL && core->mod_runners != nullptr) {
+                runner_t *mod_runner = (*core->mod_runners)[i];
+                delete mod_runner;
+            }
         }
     }
+}
 
+/* Load HAC runners for cascade while keeping FAST runners as core->runners. */
+void init_cascade_hac_runners(core_t *core, char *hac_model) {
+    CRFModelConfig hac_cfg;
+    if (is_tx_model_config(hac_model)) {
+        ERROR("%s", "cascade HAC model must be an LSTM CRF model (tx not supported in v1)");
+        exit(EXIT_FAILURE);
+    }
+    hac_cfg = load_lstm_model_config(hac_model);
+    hac_cfg.model_path = std::string(hac_model);
+    hac_cfg.sample_type = get_sample_type_from_model_name(hac_cfg.model_path);
+
+    if (static_cast<size_t>(hac_cfg.stride) != core->model_stride) {
+        ERROR("cascade: HAC stride %d != FAST stride %zu (chunking incompatible)",
+              hac_cfg.stride, core->model_stride);
+        exit(EXIT_FAILURE);
+    }
+
+    core->hac_model_config = new CRFModelConfig(hac_cfg);
+    core->hac_decoder_opts = openfish_decoder_default_opts();
+    core->hac_decoder_opts.q_shift = hac_cfg.qbias;
+    core->hac_decoder_opts.q_scale = hac_cfg.qscale;
+
+    // Stash FAST pointers; init_runners writes into core->runners / runner_stats.
+    auto *fast_runners = core->runners;
+    auto *fast_mod = core->mod_runners;
+    auto *fast_stats = core->runner_stats;
+    auto *fast_cfg = core->model_config;
+    openfish_opt_t fast_dec = core->decoder_opts;
+
+    core->model_config = core->hac_model_config;
+    core->decoder_opts = core->hac_decoder_opts;
+    core->runners = nullptr;
+    core->mod_runners = nullptr;
+    core->runner_stats = nullptr;
+
+    init_runners(core, &core->opt, hac_model);
+
+    core->hac_runners = core->runners;
+    core->hac_runner_stats = core->runner_stats;
+
+    core->runners = fast_runners;
+    core->mod_runners = fast_mod;
+    core->runner_stats = fast_stats;
+    core->model_config = fast_cfg;
+    core->decoder_opts = fast_dec;
+
+    LOG_DEBUG("%s", "cascade HAC runners initialized");
+}
+
+void free_cascade_hac_runners(core_t *core) {
+    if (core->hac_runners == nullptr) {
+        return;
+    }
+    auto *saved_runners = core->runners;
+    auto *saved_mod = core->mod_runners;
+    auto *saved_stats = core->runner_stats;
+    auto *mod_cfg = core->modbase_config;
+    const bool on_hac = (saved_runners == core->hac_runners);
+
+    core->runners = core->hac_runners;
+    core->mod_runners = nullptr;
+    core->runner_stats = core->hac_runner_stats;
+    core->modbase_config = nullptr;
+    free_runners(core);
+    delete core->hac_runners;
+    delete core->hac_runner_stats;
+    core->hac_runners = nullptr;
+    core->hac_runner_stats = nullptr;
+    delete core->hac_model_config;
+    core->hac_model_config = nullptr;
+
+    if (on_hac) {
+        core->runners = nullptr;
+        core->mod_runners = nullptr;
+        core->runner_stats = nullptr;
+    } else {
+        core->runners = saved_runners;
+        core->mod_runners = saved_mod;
+        core->runner_stats = saved_stats;
+    }
+    core->modbase_config = mod_cfg;
+#ifdef USE_GPU
+    c10::cuda::CUDACachingAllocator::emptyCache();
+#endif
+    LOG_DEBUG("%s", "cascade HAC runners freed");
+}
+
+/* Unload FAST runners (AnyModule has no .to()); reload after HAC via unpark. */
+void cascade_park_fast_runners(core_t *core) {
+    if (core->runners == nullptr) {
+        return;
+    }
+    free_runners(core);
+    delete core->runners;
+    delete core->mod_runners;
+    delete core->runner_stats;
+    core->runners = nullptr;
+    core->mod_runners = nullptr;
+    core->runner_stats = nullptr;
+#ifdef USE_GPU
+    c10::cuda::CUDACachingAllocator::emptyCache();
+#endif
+    LOG_DEBUG("%s", "cascade: FAST runners unloaded for HAC pass");
+}
+
+void cascade_unpark_fast_runners(core_t *core) {
+    if (core->cascade_fast_path == nullptr) {
+        ERROR("%s", "cascade_unpark_fast_runners: cascade_fast_path unset");
+        exit(EXIT_FAILURE);
+    }
+    init_runners(core, &core->opt, (char *)core->cascade_fast_path);
+    LOG_DEBUG("%s", "cascade: FAST runners reloaded after HAC pass");
 }
 
 torch::Tensor tensor_from_record(slow5_rec_t *rec) {

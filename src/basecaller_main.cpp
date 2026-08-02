@@ -138,6 +138,10 @@ static struct option long_options[] = {
     {"flush-threshold", required_argument, 0, 0},  //19 streaming-sim: flush partial GPU batch at N chunks (0 => full C)
     {"fixed-c-batch", required_argument, 0, 0},    //20 disable narrow: always launch full C-wide batches (pad partials)
     {"overlap-depth", required_argument, 0, 0},    //21 1=v1.2 single decode; 2=dual gpubuf decode experiment
+    {"cascade", required_argument, 0, 0},            //22 FAST→HAC cascade
+    {"cascade-hac", required_argument, 0, 0},        //23 HAC model path for cascade
+    {"cascade-force-frac", required_argument, 0, 0}, //24 promote worst fraction by mean_q
+    {"cascade-log", required_argument, 0, 0},        //25 TSV log path
     {0, 0, 0, 0}};
 
 
@@ -159,6 +163,10 @@ static inline void print_help_msg(FILE *fp_help, opt_t opt){
     fprintf(fp_help, "  --flash=yes|no              use flash attention for better performance [%s]\n", (opt.flag & SLORADO_FLASH) ? "yes" : "no");
     fprintf(fp_help, "  --overlap-decode=yes|no     overlap GPU inference with decode [%s]\n", (opt.flag & SLORADO_OVERLAP_DECODE) ? "yes" : "no");
     fprintf(fp_help, "  --overlap-depth INT         overlap pipeline depth 1 (v1.2) or 2 (dual GPU decode) [%d]\n", opt.overlap_depth);
+    fprintf(fp_help, "  --cascade=yes|no            FAST scout then HAC on hard reads [%s]\n", (opt.flag & SLORADO_CASCADE) ? "yes" : "no");
+    fprintf(fp_help, "  --cascade-hac DIR           HAC model path (required with --cascade=yes)\n");
+    fprintf(fp_help, "  --cascade-force-frac FLOAT  promote worst this fraction of reads by mean_q (required in (0,1] with cascade)\n");
+    fprintf(fp_help, "  --cascade-log FILE          write read_id/mean_q/model TSV\n");
     fprintf(fp_help, "  --flush-threshold INT      streaming-sim: flush a GPU batch once N chunks are queued [%d] (0 => full C)\n", opt.flush_threshold > 0 ? opt.flush_threshold : opt.gpu_batch_size);
     fprintf(fp_help, "  --fixed-c-batch=yes|no     disable narrow: always launch full C-wide batches, padding partials [%s]\n", (opt.flag & SLORADO_FIXED_C_BATCH) ? "yes" : "no");
     fprintf(fp_help, "  --mod STR                   detect modified bases (5mCG_5hmCG@v3) [%s]\n", opt.mod ? opt.mod : "NULL");
@@ -269,6 +277,18 @@ int basecaller_main(int argc, char* argv[]) {
                 ERROR("overlap-depth must be 1 or 2. You entered %d", opt.overlap_depth);
                 exit(EXIT_FAILURE);
             }
+        } else if (c == 0 && longindex == 22) { // cascade
+            yes_or_no(&opt.flag, SLORADO_CASCADE, long_options[longindex].name, optarg, 1);
+        } else if (c == 0 && longindex == 23) { // cascade-hac
+            opt.cascade_hac = optarg;
+        } else if (c == 0 && longindex == 24) { // cascade-force-frac
+            opt.cascade_force_frac = (float)atof(optarg);
+            if (!(opt.cascade_force_frac > 0.f && opt.cascade_force_frac <= 1.f)) {
+                ERROR("cascade-force-frac must be in (0, 1]. You entered %f", opt.cascade_force_frac);
+                exit(EXIT_FAILURE);
+            }
+        } else if (c == 0 && longindex == 25) { // cascade-log
+            opt.cascade_log = optarg;
         }
     }
 
@@ -335,6 +355,13 @@ int basecaller_main(int argc, char* argv[]) {
     fprintf(stderr,"overlap:            %d\n", opt.overlap);
     fprintf(stderr,"overlap decode:     %s\n", (opt.flag & SLORADO_OVERLAP_DECODE) ? "yes" : "no");
     fprintf(stderr,"overlap depth:      %d\n", opt.overlap_depth);
+    fprintf(stderr,"cascade:            %s\n", (opt.flag & SLORADO_CASCADE) ? "yes" : "no");
+    if (opt.flag & SLORADO_CASCADE) {
+        fprintf(stderr,"cascade hac:        %s\n", opt.cascade_hac ? opt.cascade_hac : "(missing)");
+        fprintf(stderr,"cascade force-frac: %.3f (worst %.1f%% by mean_q)\n",
+                opt.cascade_force_frac, 100.0 * (double)opt.cascade_force_frac);
+        fprintf(stderr,"cascade log:        %s\n", opt.cascade_log ? opt.cascade_log : "(none)");
+    }
     fprintf(stderr,"fixed-c batch:      %s\n", (opt.flag & SLORADO_FIXED_C_BATCH) ? "yes (no narrow)" : "no (narrow partials)");
     fprintf(stderr,"flush threshold:    %d%s\n", opt.flush_threshold > 0 ? opt.flush_threshold : opt.gpu_batch_size, opt.flush_threshold > 0 ? "" : " (full batch)");
     fprintf(stderr, "\n");
@@ -345,6 +372,15 @@ int basecaller_main(int argc, char* argv[]) {
     if (opt.overlap_depth == 2 && !(opt.flag & SLORADO_OVERLAP_DECODE)) {
         WARNING("%s", "--overlap-depth=2 requires --overlap-decode=yes; depth ignored");
         opt.overlap_depth = 1;
+    }
+    if ((opt.flag & SLORADO_CASCADE) && opt.cascade_hac == NULL) {
+        ERROR("%s", "--cascade=yes requires --cascade-hac=PATH");
+        exit(EXIT_FAILURE);
+    }
+    if ((opt.flag & SLORADO_CASCADE) &&
+        !(opt.cascade_force_frac > 0.f && opt.cascade_force_frac <= 1.f)) {
+        ERROR("%s", "--cascade=yes requires --cascade-force-frac=FLOAT in (0, 1]");
+        exit(EXIT_FAILURE);
     }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -531,6 +567,17 @@ int basecaller_main(int argc, char* argv[]) {
     profile_print(PROFILE_COLOUR_PIPELINE, "\n[%s]     - mod_postprocess: %.3f sec", __func__, core->time_postproc_mod);
     profile_print(PROFILE_COLOUR_SUMMARY, "\n[%s] data output: %.3f sec", __func__, core->time_output);
     profile_print(PROFILE_COLOUR_SUMMARY, "\n[%s] data free: %.3f sec", __func__, core->time_free_db);
+    if (opt.flag & SLORADO_CASCADE) {
+        uint64_t n_cas = core->cascade_n_fast_kept + core->cascade_n_hac_promoted;
+        double pct = n_cas ? (100.0 * (double)core->cascade_n_hac_promoted / (double)n_cas) : 0.0;
+        profile_print(PROFILE_COLOUR_SUMMARY,
+            "\n[%s] cascade: kept_fast=%lu promoted_hac=%lu (%.1f%% HAC) force_frac=%.3f",
+            __func__,
+            (unsigned long)core->cascade_n_fast_kept,
+            (unsigned long)core->cascade_n_hac_promoted,
+            pct,
+            opt.cascade_force_frac);
+    }
     fprintf(stderr,"\n");
 
     // free the core data structure

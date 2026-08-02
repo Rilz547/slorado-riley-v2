@@ -835,6 +835,12 @@ static void* pthread_single_basecall(void* voidargs) {
     };
 
     for (size_t read_idx = start; read_idx < end; ++read_idx) {
+        if (core->cascade_filter_active && core->cascade_read_mask != nullptr &&
+            (size_t)core->cascade_read_mask->size() > read_idx &&
+            !(*core->cascade_read_mask)[read_idx]) {
+            continue;
+        }
+
         auto& db_chunks = (*db->basecall_chunks)[read_idx];
 
         for (size_t chunk_idx = 0; chunk_idx < db_chunks.size(); ++chunk_idx) {

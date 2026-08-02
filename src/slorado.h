@@ -61,6 +61,7 @@ SOFTWARE.
 #define SLORADO_FLASH       0x008 // flash attention enable
 #define SLORADO_OVERLAP_DECODE 0x010 // overlap GPU infer with decode
 #define SLORADO_FIXED_C_BATCH 0x020 // disable narrow: always launch full -C-wide GPU batches (pad partial batches with dummy slots)
+#define SLORADO_CASCADE       0x040 // FAST→HAC two-model cascade (scout with FAST, HAC on hard reads)
 
 #define WORK_STEAL 1 // simple work stealing enabled or not (no work stealing mean no load balancing)
 #define STEAL_THRESH 1 // stealing threshold
@@ -88,6 +89,10 @@ typedef struct {
     int32_t overlap;            // overlap: p
 
     const char *mod;         // specified modbase: x
+
+    const char *cascade_hac;    // HAC model path when SLORADO_CASCADE
+    float cascade_force_frac;   // promote worst this fraction by mean_q; required in (0,1] if cascade
+    const char *cascade_log;    // optional TSV path: read_id, mean_q, model
 } opt_t;
 
 typedef struct read_dat read_dat_t;
@@ -266,6 +271,21 @@ typedef struct {
     // only one per GPU is used for now
     std::vector<runner_t *> *runners;
     std::vector<runner_t *> *mod_runners;
+
+    // FAST→HAC cascade (optional): second model + mask for pass-B
+    // HAC is loaded lazily and freed after each promote pass (Orin VRAM).
+    // FAST is unloaded while HAC runs, then reloaded.
+    const char *cascade_fast_path = nullptr;
+    const char *cascade_hac_path = nullptr;
+    CRFModelConfig *hac_model_config = nullptr;
+    openfish_opt_t hac_decoder_opts{};
+    std::vector<runner_t *> *hac_runners = nullptr;
+    std::vector<runner_stat_t *> *hac_runner_stats = nullptr;
+    std::vector<char> *cascade_read_mask = nullptr; // size n_rec; 1 = process this read
+    int cascade_filter_active = 0; // when 1, basecall_db respects cascade_read_mask
+    FILE *cascade_log_fp = nullptr;
+    uint64_t cascade_n_fast_kept = 0;
+    uint64_t cascade_n_hac_promoted = 0;
 
     // realtime0
     double realtime0;
