@@ -374,5 +374,9 @@ void init_opt(opt_t* opt) {
 
     opt->mod = NULL;
 
+    opt->spec_repair_threshold = 10.0f;
+    opt->spec_margin_threshold = 2.0f; /* tune: m≈2 faster/looser; m≈3 ~85% read-identical to beam */
+    opt->spec_log = NULL;
+
     // opt->flag |= SLORADO_SAM;
 }

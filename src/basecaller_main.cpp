@@ -137,6 +137,12 @@ static struct option long_options[] = {
     {"overlap-decode", required_argument, 0, 0},    //18 overlap GPU inference with decode
     {"flush-threshold", required_argument, 0, 0},  //19 streaming-sim: flush partial GPU batch at N chunks (0 => full C)
     {"fixed-c-batch", required_argument, 0, 0},    //20 disable narrow: always launch full C-wide batches (pad partials)
+    {"speculative-decode", required_argument, 0, 0}, //21 greedy draft + selective beam repair
+    {"spec-repair-threshold", required_argument, 0, 0}, //22 repair if draft mean Q < thr
+    {"spec-log", required_argument, 0, 0},         //23 optional TSV of repair decisions
+    {"spec-overlap-repair", required_argument, 0, 0}, //24 brave: overlap repair with next infer
+    {"spec-agreement", required_argument, 0, 0},   //25 Phase-0: compare greedy vs beam
+    {"spec-margin-threshold", required_argument, 0, 0}, //26 also repair if greedy margin < thr
     {0, 0, 0, 0}};
 
 
@@ -159,6 +165,12 @@ static inline void print_help_msg(FILE *fp_help, opt_t opt){
     fprintf(fp_help, "  --overlap-decode=yes|no     overlap GPU inference with decode [%s]\n", (opt.flag & SLORADO_OVERLAP_DECODE) ? "yes" : "no");
     fprintf(fp_help, "  --flush-threshold INT      streaming-sim: flush a GPU batch once N chunks are queued [%d] (0 => full C)\n", opt.flush_threshold > 0 ? opt.flush_threshold : opt.gpu_batch_size);
     fprintf(fp_help, "  --fixed-c-batch=yes|no     disable narrow: always launch full C-wide batches, padding partials [%s]\n", (opt.flag & SLORADO_FIXED_C_BATCH) ? "yes" : "no");
+    fprintf(fp_help, "  --speculative-decode=yes|no greedy draft + selective full-beam repair [%s]\n", (opt.flag & SLORADO_SPECULATIVE_DECODE) ? "yes" : "no");
+    fprintf(fp_help, "  --spec-repair-threshold FLOAT  repair draft chunk if mean Phred Q < thr [%.1f]\n", opt.spec_repair_threshold);
+    fprintf(fp_help, "  --spec-margin-threshold FLOAT  also repair if greedy decision margin < thr [%.2f]\n", opt.spec_margin_threshold);
+    fprintf(fp_help, "  --spec-log FILE            TSV log of speculative repair decisions\n");
+    fprintf(fp_help, "  --spec-overlap-repair=yes|no  overlap repair(k) with infer(k+1) [%s]\n", (opt.flag & SLORADO_SPEC_OVERLAP_REPAIR) ? "yes" : "no");
+    fprintf(fp_help, "  --spec-agreement=yes|no    compare greedy vs beam (emit beam); Phase-0 [%s]\n", (opt.flag & SLORADO_SPEC_AGREEMENT) ? "yes" : "no");
     fprintf(fp_help, "  --mod STR                   detect modified bases (5mCG_5hmCG@v3) [%s]\n", opt.mod ? opt.mod : "NULL");
     fprintf(fp_help, "  --verbose INT               verbosity level [%d]\n",(int)get_log_level());
     fprintf(fp_help, "  --version                   print version\n");
@@ -261,6 +273,18 @@ int basecaller_main(int argc, char* argv[]) {
             }
         } else if (c == 0 && longindex == 20) { // fixed-C batch (disable narrow)
             yes_or_no(&opt.flag, SLORADO_FIXED_C_BATCH, long_options[longindex].name, optarg, 1);
+        } else if (c == 0 && longindex == 21) {
+            yes_or_no(&opt.flag, SLORADO_SPECULATIVE_DECODE, long_options[longindex].name, optarg, 1);
+        } else if (c == 0 && longindex == 22) {
+            opt.spec_repair_threshold = (float)atof(optarg);
+        } else if (c == 0 && longindex == 23) {
+            opt.spec_log = optarg;
+        } else if (c == 0 && longindex == 24) {
+            yes_or_no(&opt.flag, SLORADO_SPEC_OVERLAP_REPAIR, long_options[longindex].name, optarg, 1);
+        } else if (c == 0 && longindex == 25) {
+            yes_or_no(&opt.flag, SLORADO_SPEC_AGREEMENT, long_options[longindex].name, optarg, 1);
+        } else if (c == 0 && longindex == 26) {
+            opt.spec_margin_threshold = (float)atof(optarg);
         }
     }
 
@@ -328,10 +352,31 @@ int basecaller_main(int argc, char* argv[]) {
     fprintf(stderr,"overlap decode:     %s\n", (opt.flag & SLORADO_OVERLAP_DECODE) ? "yes" : "no");
     fprintf(stderr,"fixed-c batch:      %s\n", (opt.flag & SLORADO_FIXED_C_BATCH) ? "yes (no narrow)" : "no (narrow partials)");
     fprintf(stderr,"flush threshold:    %d%s\n", opt.flush_threshold > 0 ? opt.flush_threshold : opt.gpu_batch_size, opt.flush_threshold > 0 ? "" : " (full batch)");
+    fprintf(stderr,"speculative decode: %s\n", (opt.flag & SLORADO_SPECULATIVE_DECODE) ? "yes" : "no");
+    if (opt.flag & (SLORADO_SPECULATIVE_DECODE | SLORADO_SPEC_AGREEMENT)) {
+        fprintf(stderr,"spec repair thr:    %.2f\n", opt.spec_repair_threshold);
+        fprintf(stderr,"spec margin thr:    %.2f\n", opt.spec_margin_threshold);
+        fprintf(stderr,"spec overlap repair:%s\n", (opt.flag & SLORADO_SPEC_OVERLAP_REPAIR) ? "yes" : "no");
+        fprintf(stderr,"spec agreement:     %s\n", (opt.flag & SLORADO_SPEC_AGREEMENT) ? "yes" : "no");
+        if (opt.spec_log) fprintf(stderr,"spec log:           %s\n", opt.spec_log);
+    }
     fprintf(stderr, "\n");
 
     if ((opt.flag & SLORADO_OVERLAP_DECODE) && strcmp(opt.device, "cpu") == 0) {
         WARNING("%s", "--overlap-decode is ignored on CPU");
+    }
+    if ((opt.flag & (SLORADO_SPECULATIVE_DECODE | SLORADO_SPEC_AGREEMENT | SLORADO_SPEC_OVERLAP_REPAIR)) &&
+        strcmp(opt.device, "cpu") == 0) {
+        ERROR("%s", "speculative decode requires GPU");
+        exit(EXIT_FAILURE);
+    }
+    if ((opt.flag & SLORADO_SPEC_OVERLAP_REPAIR) && !(opt.flag & SLORADO_SPECULATIVE_DECODE)) {
+        WARNING("%s", "--spec-overlap-repair requires --speculative-decode=yes; enabling it");
+        opt.flag |= SLORADO_SPECULATIVE_DECODE;
+    }
+    if ((opt.flag & SLORADO_SPEC_AGREEMENT) && !(opt.flag & SLORADO_SPECULATIVE_DECODE)) {
+        /* agreement implies draft+beam compare */
+        opt.flag |= SLORADO_SPECULATIVE_DECODE;
     }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -485,6 +530,9 @@ int basecaller_main(int argc, char* argv[]) {
                     ds->batch_size, ds->n_timesteps, ds->n_channels);
             profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - bwd_scan: %.3f sec", __func__, ds->time_bwd_scan);
             profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - beam_search: %.3f sec", __func__, ds->time_beam_search);
+            if (ds->time_draft > 0.0) {
+                profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - draft (greedy): %.3f sec", __func__, ds->time_draft);
+            }
             profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - fwd_post_scan: %.3f sec", __func__, ds->time_fwd_post_scan);
             profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - qual_data: %.3f sec", __func__, ds->time_qual_data);
             profile_print(PROFILE_COLOUR_DECODE_DETAIL, "\n[%s]                     - gen_sequence: %.3f sec", __func__, ds->time_gen_sequence);
@@ -507,6 +555,31 @@ int basecaller_main(int argc, char* argv[]) {
     profile_print(PROFILE_COLOUR_SUMMARY,
         "\n[%s] load-imbalance: %lu GPU batches (%lu tail), %lu real chunks, %lu padded slots -> %.1f%% of %lu launched GPU slots wasted on padding",
         __func__, tot_batches, tot_tail, tot_real, tot_padded, pad_pct, tot_gpu_slots);
+
+    uint64_t spec_drafted = 0, spec_repaired = 0, spec_identical = 0;
+    double spec_draft_t = 0.0, spec_repair_t = 0.0;
+    for (size_t i = 0; i < runner_stats.size(); ++i) {
+        spec_drafted += runner_stats[i]->spec_chunks_drafted;
+        spec_repaired += runner_stats[i]->spec_chunks_repaired;
+        spec_identical += runner_stats[i]->spec_chunks_identical;
+        spec_draft_t += runner_stats[i]->time_spec_draft;
+        spec_repair_t += runner_stats[i]->time_spec_repair;
+    }
+    if (spec_drafted > 0) {
+        double alpha = 1.0 - ((double)spec_repaired / (double)spec_drafted);
+        double agree_pct = (opt.flag & SLORADO_SPEC_AGREEMENT)
+            ? (100.0 * (double)spec_identical / (double)spec_drafted) : -1.0;
+        if (agree_pct >= 0.0) {
+            profile_print(PROFILE_COLOUR_SUMMARY,
+                "\n[%s] speculative: drafted %lu, repaired %lu (alpha=%.3f accept), identical greedy==beam %lu (%.1f%%), draft %.3fs repair %.3fs",
+                __func__, spec_drafted, spec_repaired, alpha, spec_identical, agree_pct, spec_draft_t, spec_repair_t);
+        } else {
+            profile_print(PROFILE_COLOUR_SUMMARY,
+                "\n[%s] speculative: drafted %lu, repaired %lu (alpha=%.3f accept), draft %.3fs repair %.3fs",
+                __func__, spec_drafted, spec_repaired, alpha, spec_draft_t, spec_repair_t);
+        }
+    }
+
     profile_print(PROFILE_COLOUR_PIPELINE, "\n[%s]     - postprocess: %.3f sec", __func__, core->time_postproc);
     profile_print(PROFILE_COLOUR_PIPELINE, "\n[%s]     - mod_preprocess: %.3f sec", __func__, core->time_preproc_mod);
     // profile_print(PROFILE_COLOUR_DETAIL, "\n[%s]         - seq_to_sig_map: %.3f sec", __func__, core->time_seq_to_sig_map);

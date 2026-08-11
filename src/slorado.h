@@ -61,6 +61,9 @@ SOFTWARE.
 #define SLORADO_FLASH       0x008 // flash attention enable
 #define SLORADO_OVERLAP_DECODE 0x010 // overlap GPU infer with decode
 #define SLORADO_FIXED_C_BATCH 0x020 // disable narrow: always launch full -C-wide GPU batches (pad partial batches with dummy slots)
+#define SLORADO_SPECULATIVE_DECODE 0x040 // greedy draft + selective full-beam repair
+#define SLORADO_SPEC_OVERLAP_REPAIR 0x080 // brave: overlap repair(k) with infer(k+1)
+#define SLORADO_SPEC_AGREEMENT 0x100 // Phase-0: run greedy+beam, log agreement; emit beam FASTQ
 
 #define WORK_STEAL 1 // simple work stealing enabled or not (no work stealing mean no load balancing)
 #define STEAL_THRESH 1 // stealing threshold
@@ -78,6 +81,10 @@ typedef struct {
     int32_t debug_break;
 
     int32_t flush_threshold;    // streaming-sim: flush a GPU batch once >= this many chunks are queued (0 => use gpu_batch_size, i.e. pack full C-wide batches)
+
+    float spec_repair_threshold; // speculative: repair draft chunk if mean Phred Q < this
+    float spec_margin_threshold; // speculative: also repair if greedy decision margin < this
+    const char *spec_log;        // optional TSV path for speculative decisions
 
     const char *out_path;       // path to output file: o
     FILE *out;
@@ -243,6 +250,13 @@ typedef struct {
     uint64_t tail_batches;            /* batches with N < C                       */
     uint64_t padded_slots;           /* sum of (C - N) over tail batches         */
     uint64_t total_chunks_processed; /* sum of N over all batches (real chunks)  */
+
+    /* speculative decode */
+    uint64_t spec_chunks_drafted;
+    uint64_t spec_chunks_repaired;
+    uint64_t spec_chunks_identical; /* agreement mode: greedy seq == beam seq */
+    double time_spec_draft;
+    double time_spec_repair;
 } runner_stat_t;
 
 typedef struct runner runner_t;

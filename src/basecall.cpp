@@ -68,11 +68,37 @@ typedef struct {
     bool active;
     // Set after decode kernels+D2H are queued but before stream sync / write.
     bool decode_launched;
+    bool draft_launched;   /* speculative: greedy queued */
+    bool repair_launched;  /* speculative: beam repair queued */
+    bool draft_synced;
+    bool repair_pending;   /* brave: draft gated; scores held for repair||next-infer */
     uint8_t *moves;
     char *sequence;
     char *qstring;
     int T;
+    std::vector<int64_t> hard_idx; /* chunks needing full-beam repair */
+    std::vector<std::string> draft_seqs; /* agreement mode */
+    float *draft_margins; /* host ptr from greedy decode (valid until next decode on slot) */
+    std::vector<float> margins_copy; /* durable copy for gate after host ring reuse */
 } overlap_pending_t;
+
+static void overlap_pending_reset(overlap_pending_t *p) {
+    p->moves = nullptr;
+    p->sequence = nullptr;
+    p->qstring = nullptr;
+    p->draft_margins = nullptr;
+    p->decode_launched = false;
+    p->draft_launched = false;
+    p->repair_launched = false;
+    p->draft_synced = false;
+    p->repair_pending = false;
+    p->hard_idx.clear();
+    p->draft_seqs.clear();
+    p->margins_copy.clear();
+    p->chunks.clear();
+    p->scores_NTC = torch::Tensor();
+    p->active = false;
+}
 
 static torch::Tensor &runner_input_slot(runner_t *runner, int slot) {
     return (slot == 0) ? runner->input_tensor : runner->input_tensor_alt;
@@ -204,6 +230,43 @@ static void accept_chunk(const int num_chunks, const basecall_chunk_t *chunk, ru
     runner_input_slot(runner, slot).index_put_({num_chunks, 0}, {input_slice});
 }
 
+static void write_one_decode_result(
+    basecall_chunk_t *chunk,
+    int T,
+    uint8_t *moves,
+    char *sequence,
+    char *qstring,
+    size_t packed_index
+) {
+    size_t idx = packed_index * (size_t)T;
+    chunk->moves = std::vector<uint8_t>(moves + idx, moves + idx + T);
+    size_t num_bases = 0;
+    for (auto move : chunk->moves) {
+        num_bases += move;
+    }
+    if (num_bases > (size_t)T) {
+        ERROR("num bases %zu greater than number of timesteps %d", num_bases, T);
+        exit(EXIT_FAILURE);
+    }
+    chunk->seq = std::string(sequence + idx, num_bases);
+    chunk->qstring = std::string(qstring + idx, num_bases);
+
+    size_t seq_size = strlen(chunk->seq.c_str());
+    size_t qstr_size = strlen(chunk->qstring.c_str());
+    if (seq_size == 0) {
+        ERROR("%s", "empty sequence returned by decoder");
+        exit(EXIT_FAILURE);
+    }
+    if (qstr_size == 0) {
+        ERROR("%s", "empty qstring returned by decoder");
+        exit(EXIT_FAILURE);
+    }
+    if (seq_size != qstr_size) {
+        ERROR("mismatch sequence size of %zu with qstring size of %zu", seq_size, qstr_size);
+        exit(EXIT_FAILURE);
+    }
+}
+
 static void write_decode_results(
     const std::vector<basecall_chunk_t *> &chunks,
     int T,
@@ -212,40 +275,165 @@ static void write_decode_results(
     char *qstring
 ) {
     for (size_t chunk = 0; chunk < chunks.size(); ++chunk) {
-        size_t idx = chunk * T;
-        chunks[chunk]->moves = std::vector<uint8_t>(moves + idx, moves + idx + T);
-        size_t num_bases = 0;
-        for (auto move: chunks[chunk]->moves) {
-            num_bases += move;
-        }
-        if (num_bases > (size_t)T) {
-            ERROR("num bases %zu greater than number of timesteps %d", num_bases, T);
-            exit(EXIT_FAILURE);
-        }
-        chunks[chunk]->seq = std::string(sequence + idx, num_bases);
-        chunks[chunk]->qstring = std::string(qstring + idx, num_bases);
-
-        size_t seq_size = strlen(chunks[chunk]->seq.c_str());
-        size_t qstr_size = strlen(chunks[chunk]->qstring.c_str());
-
-        if (seq_size == 0) {
-            ERROR("%s", "empty sequence returned by decoder");
-            exit(EXIT_FAILURE);
-        }
-
-        if (qstr_size == 0) {
-            ERROR("%s", "empty qstring returned by decoder");
-            exit(EXIT_FAILURE);
-        }
-        
-        if (seq_size != qstr_size) {
-            ERROR("mismatch sequence size of %zu with qstring size of %zu", seq_size, qstr_size);
-            ERROR("seq: %s", chunks[chunk]->seq.c_str());
-            ERROR("qstring: %s", chunks[chunk]->qstring.c_str());
-            exit(EXIT_FAILURE);
-        }
+        write_one_decode_result(chunks[chunk], T, moves, sequence, qstring, chunk);
     }
 }
+
+static float chunk_mean_phred(const std::string &qstring) {
+    if (qstring.empty()) {
+        return 0.f;
+    }
+    double sum = 0.0;
+    for (unsigned char c : qstring) {
+        sum += (double)(c - 33);
+    }
+    return (float)(sum / (double)qstring.size());
+}
+
+#ifdef USE_GPU
+/* Greedy draft all chunks; selectively full-beam repair low-confidence (or all in agreement mode). */
+static void decode_scores_speculative(
+    const core_t* core,
+    runner_t* runner,
+    runner_stat_t* ts,
+    const std::vector<basecall_chunk_t *> &chunks,
+    torch::Tensor &scores_NTC,
+    void *cuda_stream,
+    int host_slot
+) {
+    const int N = scores_NTC.size(0);
+    const int T = scores_NTC.size(1);
+    const int Cch = scores_NTC.size(2);
+    const int state_len = core->model_config->state_len;
+    const bool agreement = (core->opt.flag & SLORADO_SPEC_AGREEMENT) != 0;
+    const float thr = core->opt.spec_repair_threshold;
+    FILE *spec_log = NULL;
+    if (core->opt.spec_log != NULL) {
+        spec_log = fopen(core->opt.spec_log, "a");
+        if (spec_log == NULL) {
+            WARNING("could not open --spec-log %s", core->opt.spec_log);
+        }
+    }
+
+    uint8_t *moves = nullptr;
+    char *sequence = nullptr;
+    char *qstring = nullptr;
+    float *draft_margins = nullptr;
+
+    ts->time_spec_draft -= realtime();
+    ts->time_decode -= realtime();
+    openfish_decode_gpu_greedy(
+        T, N, Cch, scores_NTC.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len,
+        &core->decoder_opts, runner->gpubuf, &moves, &sequence, &qstring, &draft_margins,
+        &ts->decode_stats, cuda_stream, host_slot
+    );
+    if (cuda_stream != NULL) {
+        cudaError_t err = cudaStreamSynchronize((cudaStream_t)cuda_stream);
+        if (err != cudaSuccess) {
+            ERROR("cudaStreamSynchronize(draft) failed: %s", cudaGetErrorString(err));
+            exit(EXIT_FAILURE);
+        }
+        openfish_decode_stats_finish(&ts->decode_stats);
+    }
+    ts->time_decode += realtime();
+    ts->time_spec_draft += realtime();
+    ts->spec_chunks_drafted += (uint64_t)N;
+
+    write_decode_results(chunks, T, moves, sequence, qstring);
+
+    const float mthr = core->opt.spec_margin_threshold;
+    std::vector<int64_t> hard;
+    hard.reserve((size_t)N);
+    for (int i = 0; i < N; ++i) {
+        float mq = chunk_mean_phred(chunks[i]->qstring);
+        float margin = (draft_margins != nullptr) ? draft_margins[i] : 0.f;
+        bool need = agreement || (mq < thr) || (margin < mthr);
+        if (need) {
+            hard.push_back(i);
+        }
+        if (spec_log) {
+            fprintf(spec_log, "%d\t%.3f\t%.4f\t%d\t%zu\n", i, mq, margin, need ? 1 : 0, chunks[i]->seq.size());
+        }
+    }
+
+    if (agreement) {
+        /* Full beam on all chunks; compare to draft; emit beam. */
+        std::vector<std::string> draft_seqs(N);
+        for (int i = 0; i < N; ++i) {
+            draft_seqs[i] = chunks[i]->seq;
+        }
+        ts->time_spec_repair -= realtime();
+        ts->time_decode -= realtime();
+        openfish_decode_gpu(
+            T, N, Cch, scores_NTC.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len,
+            &core->decoder_opts, runner->gpubuf, &moves, &sequence, &qstring,
+            &ts->decode_stats, cuda_stream, host_slot ^ 1
+        );
+        if (cuda_stream != NULL) {
+            cudaError_t err = cudaStreamSynchronize((cudaStream_t)cuda_stream);
+            if (err != cudaSuccess) {
+                ERROR("cudaStreamSynchronize(beam agreement) failed: %s", cudaGetErrorString(err));
+                exit(EXIT_FAILURE);
+            }
+            openfish_decode_stats_finish(&ts->decode_stats);
+        }
+        ts->time_decode += realtime();
+        ts->time_spec_repair += realtime();
+        ts->spec_chunks_repaired += (uint64_t)N;
+        write_decode_results(chunks, T, moves, sequence, qstring);
+        for (int i = 0; i < N; ++i) {
+            if (draft_seqs[i] == chunks[i]->seq) {
+                ts->spec_chunks_identical++;
+            }
+        }
+        if (spec_log) {
+            fclose(spec_log);
+        }
+        return;
+    }
+
+    if (hard.empty()) {
+        if (spec_log) {
+            fclose(spec_log);
+        }
+        return;
+    }
+
+    auto idx = torch::tensor(hard, torch::TensorOptions().dtype(torch::kLong)).to(scores_NTC.device());
+    torch::Tensor hard_scores = scores_NTC.index_select(0, idx).contiguous();
+    const int Nh = (int)hard.size();
+
+    ts->time_spec_repair -= realtime();
+    ts->time_decode -= realtime();
+    openfish_decode_gpu(
+        T, Nh, Cch, hard_scores.data_ptr(), OPENFISH_SCORE_F16, 1.0f, state_len,
+        &core->decoder_opts, runner->gpubuf, &moves, &sequence, &qstring,
+        &ts->decode_stats, cuda_stream, host_slot ^ 1
+    );
+    if (cuda_stream != NULL) {
+        cudaError_t err = cudaStreamSynchronize((cudaStream_t)cuda_stream);
+        if (err != cudaSuccess) {
+            ERROR("cudaStreamSynchronize(repair) failed: %s", cudaGetErrorString(err));
+            exit(EXIT_FAILURE);
+        }
+        openfish_decode_stats_finish(&ts->decode_stats);
+    }
+    ts->time_decode += realtime();
+    ts->time_spec_repair += realtime();
+    ts->spec_chunks_repaired += (uint64_t)Nh;
+
+    for (int j = 0; j < Nh; ++j) {
+        write_one_decode_result(chunks[(size_t)hard[j]], T, moves, sequence, qstring, (size_t)j);
+        if (spec_log) {
+            fprintf(spec_log, "repair\t%lld\tfinal_bases\t%zu\n",
+                    (long long)hard[j], chunks[(size_t)hard[j]]->seq.size());
+        }
+    }
+    if (spec_log) {
+        fclose(spec_log);
+    }
+}
+#endif
 
 static void decode_scores_to_chunks(
     const core_t* core,
@@ -261,6 +449,14 @@ static void decode_scores_to_chunks(
     const int C = scores_NTC.size(2);
     const int state_len = core->model_config->state_len;
     int nthreads = core->opt.num_thread / core->runners->size();
+
+#ifdef USE_GPU
+    if (runner->device != "cpu" &&
+        (core->opt.flag & (SLORADO_SPECULATIVE_DECODE | SLORADO_SPEC_AGREEMENT))) {
+        decode_scores_speculative(core, runner, ts, chunks, scores_NTC, cuda_stream, 0);
+        return;
+    }
+#endif
 
     uint8_t *moves;
     char *sequence;
@@ -470,14 +666,22 @@ static void basecall_chunks(
 }
 
 #ifdef USE_GPU
-/* Queue decode kernels + pinned D2H for pending into pending->host_slot; does NOT sync. */
+/* Queue beam (or greedy draft) decode for pending; does NOT sync. */
 static void overlap_launch_decode(
     const core_t* core,
     runner_t* runner,
     runner_stat_t* ts,
-    overlap_pending_t *pending
+    overlap_pending_t *pending,
+    bool greedy_draft
 ) {
-    if (!pending->active || pending->decode_launched) {
+    if (!pending->active) {
+        return;
+    }
+    if (greedy_draft) {
+        if (pending->draft_launched) {
+            return;
+        }
+    } else if (pending->decode_launched) {
         return;
     }
 
@@ -493,25 +697,43 @@ static void overlap_launch_decode(
     const int C = pending->scores_NTC.size(2);
     const int state_len = core->model_config->state_len;
 
-    openfish_decode_gpu(
-        T, N, C,
-        pending->scores_NTC.data_ptr(),
-        OPENFISH_SCORE_F16, 1.0f, state_len,
-        &core->decoder_opts,
-        runner->gpubuf,
-        &pending->moves,
-        &pending->sequence,
-        &pending->qstring,
-        &ts->decode_stats,
-        (void *)runner->decode_stream->stream(),
-        pending->host_slot
-    );
+    if (greedy_draft) {
+        openfish_decode_gpu_greedy(
+            T, N, C,
+            pending->scores_NTC.data_ptr(),
+            OPENFISH_SCORE_F16, 1.0f, state_len,
+            &core->decoder_opts,
+            runner->gpubuf,
+            &pending->moves,
+            &pending->sequence,
+            &pending->qstring,
+            &pending->draft_margins,
+            &ts->decode_stats,
+            (void *)runner->decode_stream->stream(),
+            pending->host_slot
+        );
+        pending->draft_launched = true;
+        pending->decode_launched = true; /* host ptrs valid after sync */
+    } else {
+        openfish_decode_gpu(
+            T, N, C,
+            pending->scores_NTC.data_ptr(),
+            OPENFISH_SCORE_F16, 1.0f, state_len,
+            &core->decoder_opts,
+            runner->gpubuf,
+            &pending->moves,
+            &pending->sequence,
+            &pending->qstring,
+            &ts->decode_stats,
+            (void *)runner->decode_stream->stream(),
+            pending->host_slot
+        );
+        pending->decode_launched = true;
+    }
 
     pending->T = T;
-    pending->decode_launched = true;
 }
 
-/* Block until queued decode finishes and resolve phase timers. Leaves host ptrs for write. */
 static void overlap_sync_decode(
     runner_t* runner,
     runner_stat_t* ts,
@@ -527,46 +749,223 @@ static void overlap_sync_decode(
         exit(EXIT_FAILURE);
     }
 
-    /* Must finish before the next decode launch (async timing state is one-shot). */
     openfish_decode_stats_finish(&ts->decode_stats);
+    pending->draft_synced = true;
 }
 
-/* Copy synced host results into chunks; host ring slot may be reused after this returns. */
 static void overlap_write_decode(overlap_pending_t *pending) {
     if (!pending->active || !pending->decode_launched) {
         return;
     }
 
     write_decode_results(pending->chunks, pending->T, pending->moves, pending->sequence, pending->qstring);
+    overlap_pending_reset(pending);
+}
+
+/* Write draft into chunks and build hard set. Sets repair_pending if hard work remains. */
+static void overlap_spec_gate(
+    const core_t* core,
+    runner_stat_t* ts,
+    overlap_pending_t *pending
+) {
+    if (!pending->active || !pending->draft_synced) {
+        return;
+    }
+
+    write_decode_results(pending->chunks, pending->T, pending->moves, pending->sequence, pending->qstring);
+    ts->spec_chunks_drafted += (uint64_t)pending->chunks.size();
+
+    const bool agreement = (core->opt.flag & SLORADO_SPEC_AGREEMENT) != 0;
+    const float thr = core->opt.spec_repair_threshold;
+    const float mthr = core->opt.spec_margin_threshold;
+    pending->hard_idx.clear();
+    pending->draft_seqs.clear();
+    pending->margins_copy.clear();
+    if (pending->draft_margins != nullptr) {
+        pending->margins_copy.assign(pending->draft_margins, pending->draft_margins + pending->chunks.size());
+    }
+    if (agreement) {
+        pending->draft_seqs.resize(pending->chunks.size());
+        for (size_t i = 0; i < pending->chunks.size(); ++i) {
+            pending->draft_seqs[i] = pending->chunks[i]->seq;
+            pending->hard_idx.push_back((int64_t)i);
+        }
+    } else {
+        for (size_t i = 0; i < pending->chunks.size(); ++i) {
+            float mq = chunk_mean_phred(pending->chunks[i]->qstring);
+            float margin = (i < pending->margins_copy.size()) ? pending->margins_copy[i] : 0.f;
+            if (mq < thr || margin < mthr) {
+                pending->hard_idx.push_back((int64_t)i);
+            }
+        }
+    }
+
     pending->moves = nullptr;
     pending->sequence = nullptr;
     pending->qstring = nullptr;
     pending->decode_launched = false;
-    pending->chunks.clear();
-    pending->scores_NTC = torch::Tensor();
-    pending->active = false;
+    pending->draft_launched = false;
+    pending->repair_pending = !pending->hard_idx.empty();
+    if (!pending->repair_pending) {
+        /* All drafts accepted — drop scores. */
+        pending->scores_NTC = torch::Tensor();
+        pending->chunks.clear();
+        pending->active = false;
+        pending->draft_synced = false;
+    }
 }
 
-/* Sync + write (flush path when there is no following batch to overlap the write with). */
-static void overlap_finalize_decode(
+/* Queue full-beam repair for gated hard set (async). Does not sync. */
+static void overlap_launch_repair(
+    const core_t* core,
+    runner_t* runner,
+    runner_stat_t* ts,
+    overlap_pending_t *hold
+) {
+    if (!hold->active || !hold->repair_pending || hold->repair_launched) {
+        return;
+    }
+
+    c10::cuda::CUDAStreamGuard decode_guard(*runner->decode_stream);
+    const int T = hold->T;
+    const int C = hold->scores_NTC.size(2);
+    const bool agreement = (core->opt.flag & SLORADO_SPEC_AGREEMENT) != 0;
+
+    ts->time_spec_repair -= realtime();
+    if (agreement) {
+        const int N = hold->scores_NTC.size(0);
+        openfish_decode_gpu(
+            T, N, C, hold->scores_NTC.data_ptr(), OPENFISH_SCORE_F16, 1.0f,
+            core->model_config->state_len, &core->decoder_opts, runner->gpubuf,
+            &hold->moves, &hold->sequence, &hold->qstring,
+            &ts->decode_stats, (void *)runner->decode_stream->stream(), hold->host_slot ^ 1
+        );
+    } else {
+        auto idx = torch::tensor(hold->hard_idx, torch::TensorOptions().dtype(torch::kLong))
+                       .to(hold->scores_NTC.device());
+        torch::Tensor hard_scores = hold->scores_NTC.index_select(0, idx).contiguous();
+        const int Nh = (int)hold->hard_idx.size();
+        openfish_decode_gpu(
+            T, Nh, C, hard_scores.data_ptr(), OPENFISH_SCORE_F16, 1.0f,
+            core->model_config->state_len, &core->decoder_opts, runner->gpubuf,
+            &hold->moves, &hold->sequence, &hold->qstring,
+            &ts->decode_stats, (void *)runner->decode_stream->stream(), hold->host_slot ^ 1
+        );
+        /* hard_scores must stay alive until sync — stash via scores_NTC replacement after copy.
+         * Keep original scores until sync; hard_scores is a view/temp — make contiguous owned: */
+        hold->scores_NTC = hard_scores; /* keep alive until sync */
+    }
+    hold->repair_launched = true;
+    hold->decode_launched = true;
+    ts->time_spec_repair += realtime(); /* launch cost; GPU time counted after sync via decode_stats */
+}
+
+static void overlap_sync_repair_and_stitch(
+    const core_t* core,
+    runner_t* runner,
+    runner_stat_t* ts,
+    overlap_pending_t *hold
+) {
+    if (!hold->active || !hold->repair_launched) {
+        return;
+    }
+
+    ts->time_spec_repair -= realtime();
+    cudaError_t err = cudaStreamSynchronize(runner->decode_stream->stream());
+    if (err != cudaSuccess) {
+        ERROR("cudaStreamSynchronize(repair) failed: %s", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+    openfish_decode_stats_finish(&ts->decode_stats);
+    ts->time_spec_repair += realtime();
+
+    const bool agreement = (core->opt.flag & SLORADO_SPEC_AGREEMENT) != 0;
+    const int T = hold->T;
+    if (agreement) {
+        ts->spec_chunks_repaired += (uint64_t)hold->chunks.size();
+        write_decode_results(hold->chunks, T, hold->moves, hold->sequence, hold->qstring);
+        for (size_t i = 0; i < hold->chunks.size(); ++i) {
+            if (i < hold->draft_seqs.size() && hold->draft_seqs[i] == hold->chunks[i]->seq) {
+                ts->spec_chunks_identical++;
+            }
+        }
+    } else {
+        const int Nh = (int)hold->hard_idx.size();
+        ts->spec_chunks_repaired += (uint64_t)Nh;
+        for (int j = 0; j < Nh; ++j) {
+            write_one_decode_result(hold->chunks[(size_t)hold->hard_idx[j]], T,
+                                    hold->moves, hold->sequence, hold->qstring, (size_t)j);
+        }
+    }
+    (void)core;
+    overlap_pending_reset(hold);
+}
+
+/* Serial path: gate then repair+stitch immediately. */
+static void overlap_spec_repair_and_write(
+    const core_t* core,
     runner_t* runner,
     runner_stat_t* ts,
     overlap_pending_t *pending
 ) {
-    overlap_sync_decode(runner, ts, pending);
-    overlap_write_decode(pending);
+    overlap_spec_gate(core, ts, pending);
+    if (!pending->active || !pending->repair_pending) {
+        return;
+    }
+    overlap_launch_repair(core, runner, ts, pending);
+    overlap_sync_repair_and_stitch(core, runner, ts, pending);
+}
+
+static void overlap_finalize_decode(
+    const core_t* core,
+    runner_t* runner,
+    runner_stat_t* ts,
+    overlap_pending_t *pending,
+    overlap_pending_t *repair_hold
+) {
+    const bool speculative = (core->opt.flag & (SLORADO_SPECULATIVE_DECODE | SLORADO_SPEC_AGREEMENT)) != 0;
+    if (repair_hold && repair_hold->active && repair_hold->repair_pending) {
+        if (!repair_hold->repair_launched) {
+            overlap_launch_repair(core, runner, ts, repair_hold);
+        }
+        overlap_sync_repair_and_stitch(core, runner, ts, repair_hold);
+    }
+    if (!pending->active) {
+        return;
+    }
+    if (speculative) {
+        if (pending->repair_pending) {
+            if (!pending->repair_launched) {
+                overlap_launch_repair(core, runner, ts, pending);
+            }
+            overlap_sync_repair_and_stitch(core, runner, ts, pending);
+            return;
+        }
+        if (!pending->draft_launched) {
+            overlap_launch_decode(core, runner, ts, pending, true);
+        }
+        overlap_sync_decode(runner, ts, pending);
+        overlap_spec_repair_and_write(core, runner, ts, pending);
+    } else {
+        overlap_sync_decode(runner, ts, pending);
+        overlap_write_decode(pending);
+    }
 }
 
 static void basecall_chunks_overlap(
     const core_t* core,
     const int runner_idx,
     const std::vector<basecall_chunk_t *> &chunks,
-    overlap_pending_t *pending
+    overlap_pending_t *pending,
+    overlap_pending_t *repair_hold
 ) {
     runner_stat_t* ts = (*core->runner_stats)[runner_idx];
     runner_t* runner = (*core->runners)[runner_idx];
     auto chunk_size = core->chunk_size;
     const int slot = runner->overlap_slot;
+    const bool speculative = (core->opt.flag & (SLORADO_SPECULATIVE_DECODE | SLORADO_SPEC_AGREEMENT)) != 0;
+    const bool brave = speculative && (core->opt.flag & SLORADO_SPEC_OVERLAP_REPAIR) != 0
+                       && !(core->opt.flag & SLORADO_SPEC_AGREEMENT);
 
     c10::DeviceGuard device_guard(runner->tensor_opts.device());
     torch::InferenceMode inference_guard;
@@ -580,14 +979,27 @@ static void basecall_chunks_overlap(
 
     ts->time_basecall -= realtime();
 
-    // 1) Ensure previous batch's decode is queued (usually already launched last iteration).
+    /* Start decode-side work that can overlap infer(curr):
+     *   brave: repair(hold) || infer(curr)
+     *   else:  draft/beam(pending) || infer(curr) */
     const bool had_pending = pending->active;
-    if (had_pending) {
+    const bool had_repair = repair_hold->active && repair_hold->repair_pending;
+    if (had_repair) {
         ts->time_decode -= realtime();
-        overlap_launch_decode(core, runner, ts, pending);
+        overlap_launch_repair(core, runner, ts, repair_hold);
+    } else if (had_pending) {
+        ts->time_decode -= realtime();
+        if (speculative) {
+            if (!pending->draft_launched) {
+                ts->time_spec_draft -= realtime();
+                overlap_launch_decode(core, runner, ts, pending, true);
+                ts->time_spec_draft += realtime();
+            }
+        } else {
+            overlap_launch_decode(core, runner, ts, pending, false);
+        }
     }
 
-    // 2) Infer current batch; overlaps in-flight decode of previous on decode_stream.
     ts->time_infer -= realtime();
     torch::Tensor scores_NTC;
     {
@@ -597,7 +1009,7 @@ static void basecall_chunks_overlap(
                                   ? runner_input_slot(runner, slot)
                                   : runner_input_slot(runner, slot).narrow(0, 0, N);
         auto scores = runner->module->forward(slot_input.to(runner->tensor_opts.device()));
-        scores_NTC = scores.contiguous(); // NTC for openfish
+        scores_NTC = scores.contiguous();
         cudaError_t err = cudaEventRecord(runner->infer_event[slot], runner->infer_stream->stream());
         if (err != cudaSuccess) {
             ERROR("cudaEventRecord failed: %s", cudaGetErrorString(err));
@@ -606,38 +1018,77 @@ static void basecall_chunks_overlap(
     }
     ts->time_infer += realtime();
 
-    // 3) P5-lite: sync previous decode → launch current decode into the other host slot →
-    //    write previous results on the CPU while current decode runs on the GPU.
-    overlap_pending_t prev{};
-    prev.active = false;
-    if (had_pending) {
-        overlap_sync_decode(runner, ts, pending);
-        prev = std::move(*pending);
-        /* Scores no longer needed after D2H; drop before launching the next decode. */
-        prev.scores_NTC = torch::Tensor();
-        pending->active = false;
-        pending->decode_launched = false;
-        pending->moves = nullptr;
-        pending->sequence = nullptr;
-        pending->qstring = nullptr;
-        pending->scores_NTC = torch::Tensor();
-        pending->chunks.clear();
+    if (had_repair) {
+        overlap_sync_repair_and_stitch(core, runner, ts, repair_hold);
+        if (!had_pending) {
+            ts->time_decode += realtime();
+        }
+        /* else keep decode timer open for draft/gate of pending below */
     }
 
+    if (had_pending) {
+        if (speculative) {
+            /* Draft may have been deferred last iter while repair_hold owned gpubuf. */
+            if (!pending->draft_launched && !pending->repair_pending) {
+                ts->time_spec_draft -= realtime();
+                overlap_launch_decode(core, runner, ts, pending, true);
+                ts->time_spec_draft += realtime();
+            }
+            if (!pending->repair_pending) {
+                overlap_sync_decode(runner, ts, pending);
+                overlap_spec_gate(core, ts, pending);
+            }
+
+            if (pending->active && pending->repair_pending) {
+                if (brave) {
+                    /* Defer repair to next iter: repair(prev) || infer(next). */
+                    *repair_hold = std::move(*pending);
+                    overlap_pending_reset(pending);
+                } else {
+                    overlap_launch_repair(core, runner, ts, pending);
+                    overlap_sync_repair_and_stitch(core, runner, ts, pending);
+                }
+            } else if (pending->active && !pending->repair_pending) {
+                overlap_pending_reset(pending);
+            }
+            ts->time_decode += realtime();
+        } else {
+            overlap_sync_decode(runner, ts, pending);
+            overlap_write_decode(pending);
+            ts->time_decode += realtime();
+        }
+    }
+
+    /* Install current batch and launch its draft/beam when gpubuf is free. */
     pending->chunks = chunks;
     pending->scores_NTC = scores_NTC;
     pending->slot = slot;
-    pending->host_slot = had_pending ? (prev.host_slot ^ 1) : 0;
+    pending->host_slot = slot & 1;
     pending->active = true;
     pending->decode_launched = false;
+    pending->draft_launched = false;
+    pending->repair_launched = false;
+    pending->draft_synced = false;
+    pending->repair_pending = false;
     pending->moves = nullptr;
     pending->sequence = nullptr;
     pending->qstring = nullptr;
+    pending->hard_idx.clear();
+    pending->draft_seqs.clear();
 
-    overlap_launch_decode(core, runner, ts, pending);
-
-    if (had_pending) {
-        overlap_write_decode(&prev);
+    if (speculative) {
+        /* Depth-1: while a repair is deferred, keep scores alive and delay draft launch
+         * so gpubuf is exclusive to repair||infer on the next iteration. */
+        if (!repair_hold->active) {
+            ts->time_decode -= realtime();
+            ts->time_spec_draft -= realtime();
+            overlap_launch_decode(core, runner, ts, pending, true);
+            ts->time_spec_draft += realtime();
+            ts->time_decode += realtime();
+        }
+    } else {
+        ts->time_decode -= realtime();
+        overlap_launch_decode(core, runner, ts, pending, false);
         ts->time_decode += realtime();
     }
 
@@ -665,8 +1116,9 @@ static void* pthread_single_basecall(void* voidargs) {
     std::vector<basecall_chunk_t *> chunks;
 #ifdef USE_GPU
     overlap_pending_t pending{};
-    pending.active = false;
-    pending.decode_launched = false;
+    overlap_pending_t repair_hold{};
+    overlap_pending_reset(&pending);
+    overlap_pending_reset(&repair_hold);
     pending.host_slot = 0;
     const bool use_overlap = runner->overlap_decode;
 #else
@@ -685,7 +1137,7 @@ static void* pthread_single_basecall(void* voidargs) {
         }
 #ifdef USE_GPU
         if (use_overlap) {
-            basecall_chunks_overlap(core, runner_idx, ch, &pending);
+            basecall_chunks_overlap(core, runner_idx, ch, &pending, &repair_hold);
         } else
 #endif
         {
@@ -712,14 +1164,21 @@ static void* pthread_single_basecall(void* voidargs) {
     }
 
 #ifdef USE_GPU
-    if (use_overlap && pending.active) {
+    if (use_overlap && (pending.active || repair_hold.active)) {
         runner_stat_t* ts = (*core->runner_stats)[runner_idx];
         c10::DeviceGuard device_guard(runner->tensor_opts.device());
         ts->time_basecall -= realtime();
         ts->time_decode -= realtime();
         // Last batch: no following infer to overlap with — launch + finalize serially.
-        overlap_launch_decode(core, runner, ts, &pending);
-        overlap_finalize_decode(runner, ts, &pending);
+        const bool speculative = (core->opt.flag & (SLORADO_SPECULATIVE_DECODE | SLORADO_SPEC_AGREEMENT)) != 0;
+        if (speculative && pending.active && !pending.draft_launched && !pending.repair_pending) {
+            ts->time_spec_draft -= realtime();
+            overlap_launch_decode(core, runner, ts, &pending, true);
+            ts->time_spec_draft += realtime();
+        } else if (!speculative && pending.active && !pending.decode_launched) {
+            overlap_launch_decode(core, runner, ts, &pending, false);
+        }
+        overlap_finalize_decode(core, runner, ts, &pending, &repair_hold);
         ts->time_decode += realtime();
         ts->time_basecall += realtime();
     }
