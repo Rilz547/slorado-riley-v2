@@ -74,31 +74,43 @@ from typing import TextIO
 
 # Appended to every output artifact this invocation writes (report, consoles,
 # FASTQs, nsys, state). Examples: "" | "-v1.2" | "-baseline-v1.2"
-FILENAME_APPEND_FLAG = "-overlap-v1.2"
+FILENAME_APPEND_FLAG = "-spec-q10m2brave"
 
 # Timed variance runs per config (0 = skip). Stats use ONLY these /dev/null runs.
-NUM_RUNS_FAST_1K = 10
-NUM_RUNS_HAC_1K = 10
-NUM_RUNS_FAST_20K = 3
-NUM_RUNS_HAC_20K = 3
+# 1 + NSIGHT="no" => per config: FASTQ run (acts as the warm-up, excluded from stats), then ONE
+# timed /dev/null run (the recorded time). Two runs per config, FASTQ kept for accuracy analysis.
+NUM_RUNS_FAST_1K = 1
+NUM_RUNS_HAC_1K = 1
+NUM_RUNS_FAST_20K = 1
+NUM_RUNS_HAC_20K = 1
 
 # One uncounted warmup before accuracy + timed runs (per config).
-WARMUP_FAST_1K = "yes"
-WARMUP_HAC_1K = "yes"
-WARMUP_FAST_20K = "yes"
-WARMUP_HAC_20K = "yes"
+# "no" here: the FASTQ accuracy run below already warms the GPU/caches before the timed run.
+WARMUP_FAST_1K = "no"
+WARMUP_HAC_1K = "no"
+WARMUP_FAST_20K = "no"
+WARMUP_HAC_20K = "no"
 
 # Separate accuracy pass (nsys + FASTQ) before timed runs; excluded from stats.
-NSIGHT = "yes"  # "yes" | "no"
+NSIGHT = "no"  # "yes" | "no"
 
 # Capture full console (decode/RNN dumps) into fast/hac console files.
 RECORD_CONSOLE = "yes"  # "yes" | "no"
 
 # Shared by every basecaller invocation.
-EXTRA_ARGS = "--overlap-decode=yes"
-# EXTRA_ARGS = ""
-# Batch size only — do NOT put -o here; the runner chooses /dev/null vs real FASTQ.
-BASE_ARGS = "-C 128"
+EXTRA_ARGS = (
+    "--overlap-decode=yes --fixed-c-batch=no "
+    "--speculative-decode=yes --spec-repair-threshold=10 --spec-margin-threshold=2 "
+    "--spec-overlap-repair=yes"
+)
+# EXTRA_ARGS = "--overlap-decode=yes --fixed-c-batch=no"   # non-speculative "best" baseline
+# Per-model flags appended after EXTRA_ARGS (best load-imbalance flush threshold: FAST 64, HAC 128).
+FAMILY_ARGS = {
+    "fast": "--flush-threshold=64",
+    "hac": "--flush-threshold=128",
+}
+# Batch/chunk flags only — do NOT put -o here; the runner chooses /dev/null vs real FASTQ.
+BASE_ARGS = "-C 128 -c 12288 -K 4096 -p 150"
 
 # Nsight (used only when NSIGHT=yes)
 NSYS_TRACE = "cuda,nvtx,osrt"
@@ -313,6 +325,9 @@ def build_slorado_cmd(cfg: Config, out_path: str) -> list[str]:
     parts.extend(["-o", out_path])
     if EXTRA_ARGS.strip():
         parts.extend(shlex.split(EXTRA_ARGS))
+    fam = FAMILY_ARGS.get(cfg.model_family, "")
+    if fam.strip():
+        parts.extend(shlex.split(fam))
     parts.extend([cfg.model, cfg.data])
     return parts
 
@@ -846,6 +861,7 @@ def build_report_header(ts: str, out_file: Path, enabled: list[Config]) -> list[
     report.append(f"NSIGHT:                 {NSIGHT}")
     report.append(f"RECORD_CONSOLE:         {RECORD_CONSOLE}")
     report.append(f"EXTRA_ARGS:             {EXTRA_ARGS!r}")
+    report.append(f"FAMILY_ARGS:            {FAMILY_ARGS!r}")
     report.append(f"BASE_ARGS:              {BASE_ARGS!r}")
     report.append(f"overlap_mode:           {overlap_mode()}")
     report.append(f"NSYS_TRACE:             {NSYS_TRACE!r}")
