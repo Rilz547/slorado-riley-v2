@@ -78,3 +78,4 @@ pyvenv
 *.svg
 *.png
 *.json
+/docs-riley/power-runs/*

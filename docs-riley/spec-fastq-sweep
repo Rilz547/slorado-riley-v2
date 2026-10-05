@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# Jetson: speculative-decode sweep (best FAST/HAC flags).
+# Runs BOTH 1k and 20k. For each config:
+#   1) /dev/null  — timing only (fastest wall time)
+#   2) FASTQ keep — for main-PC minimap accuracy
+#
+# Usage (repo root, venv + built slorado):
+#   ./docs-riley/spec-fastq-sweep --fast
+#   ./docs-riley/spec-fastq-sweep --hac
+#   ./docs-riley/spec-fastq-sweep --fast --quick   # fewer gates
+#
+# Then on main PC:
+#   python3 fetch-and-minimap-spec.py --stamp <STAMP>
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: $0 --fast|--hac [--quick]" >&2
+  exit 1
+}
+
+[[ $# -ge 1 ]] || usage
+model_flag="$1"
+quick=0
+shift
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quick) quick=1 ;;
+    *) usage ;;
+  esac
+  shift
+done
+
+case "$model_flag" in
+  --fast) model=fast; flush=64 ;;
+  --hac)  model=hac;  flush=128 ;;
+  *) usage ;;
+esac
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+[[ -x ./slorado ]] || { echo "ERROR: ./slorado missing; build first" >&2; exit 1; }
+
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+outdir="docs-riley/spec-decode-sweep/${stamp}"
+fastq_dir="${outdir}/fastq"
+log_dir="${outdir}/logs"
+mkdir -p "$fastq_dir" "$log_dir"
+
+model_path="models/dna_r10.4.1_e8.2_400bps_${model}@v5.0.0"
+base_flags=(-C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --fixed-c-batch=no --flush-threshold="$flush")
+
+manifest="${outdir}/manifest.csv"
+echo "tag,model,size,flush,phase,speculative,q_thr,margin_thr,brave,fastq,real_s,cpu_s,peak_ram_gb,drafted,repaired,alpha,draft_s,repair_s,log" > "$manifest"
+
+parse_log() {
+  # sets: real_s cpu_s peak drafted repaired alpha draft_s repair_s
+  local log="$1"
+  real_s="$(grep -E '\[main\] Real time:' "$log" | tail -1 | sed -n 's/.*Real time: \([0-9.]*\) sec.*/\1/p' || true)"
+  cpu_s="$(grep -E '\[main\] Real time:' "$log" | tail -1 | sed -n 's/.*CPU time: \([0-9.]*\) sec.*/\1/p' || true)"
+  peak="$(grep -E '\[main\] Real time:' "$log" | tail -1 | sed -n 's/.*Peak RAM: \([0-9.]*\) GB.*/\1/p' || true)"
+  drafted=""; repaired=""; alpha=""; draft_s=""; repair_s=""
+  if grep -q 'speculative:' "$log"; then
+    local line
+    line="$(grep 'speculative:' "$log" | tail -1)"
+    drafted="$(echo "$line" | sed -n 's/.*drafted \([0-9]*\).*/\1/p')"
+    repaired="$(echo "$line" | sed -n 's/.*repaired \([0-9]*\).*/\1/p')"
+    alpha="$(echo "$line" | sed -n 's/.*alpha=\([0-9.]*\).*/\1/p')"
+    draft_s="$(echo "$line" | sed -n 's/.*draft \([0-9.]*\)s.*/\1/p')"
+    repair_s="$(echo "$line" | sed -n 's/.*repair \([0-9.]*\)s.*/\1/p')"
+  fi
+}
+
+append_manifest() {
+  local tag="$1" size="$2" phase="$3" speculative="$4" q_thr="$5" m_thr="$6" brave="$7" fastq_name="$8" log_name="$9"
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    "$tag" "$model" "$size" "$flush" "$phase" "$speculative" "$q_thr" "$m_thr" "$brave" \
+    "$fastq_name" "${real_s:-}" "${cpu_s:-}" "${peak:-}" \
+    "${drafted:-}" "${repaired:-}" "${alpha:-}" "${draft_s:-}" "${repair_s:-}" \
+    "$log_name" >> "$manifest"
+}
+
+# Run timing (/dev/null) then keep (FASTQ). Extra args after meta are slorado flags.
+run_pair() {
+  local tag="$1"; shift
+  local size="$1"; shift
+  local speculative="$1"; shift
+  local q_thr="$1"; shift
+  local m_thr="$1"; shift
+  local brave="$1"; shift
+  local reads="test/PGXXXX230339/reads_${size}.blow5"
+
+  local log_time="${log_dir}/${size}_${tag}_time.log"
+  local log_keep="${log_dir}/${size}_${tag}_keep.log"
+  local fastq="${fastq_dir}/output_${model}_${size}_${tag}.fastq"
+
+  echo "=== [${size}] ${tag}  TIME → /dev/null ==="
+  ./slorado basecaller "${base_flags[@]}" -o /dev/null "$@" "$model_path" "$reads" 2>&1 | tee "$log_time" \
+    | grep -E 'speculative decode:|spec repair|spec margin|spec overlap|speculative:|Real time' || true
+  parse_log "$log_time"
+  append_manifest "$tag" "$size" "time" "$speculative" "$q_thr" "$m_thr" "$brave" "" "$(basename "$log_time")"
+  echo "    real_s=${real_s:-?}  alpha=${alpha:-—}"
+
+  echo "=== [${size}] ${tag}  KEEP → ${fastq} ==="
+  ./slorado basecaller "${base_flags[@]}" -o "$fastq" "$@" "$model_path" "$reads" 2>&1 | tee "$log_keep" \
+    | grep -E 'speculative decode:|spec repair|spec margin|spec overlap|speculative:|Real time' || true
+  parse_log "$log_keep"
+  append_manifest "$tag" "$size" "keep" "$speculative" "$q_thr" "$m_thr" "$brave" \
+    "$(basename "$fastq")" "$(basename "$log_keep")"
+  echo "    real_s=${real_s:-?}  alpha=${alpha:-—}"
+}
+
+run_size() {
+  local size="$1"
+  echo
+  echo "########## size=${size} ##########"
+
+  run_pair "baseline" "$size" no "" "" no
+
+  if [[ "$quick" -eq 1 ]]; then
+    run_pair "q10_m2" "$size" yes 10 2 no \
+      --speculative-decode=yes --spec-repair-threshold=10 --spec-margin-threshold=2
+    run_pair "q10_m2_brave" "$size" yes 10 2 yes \
+      --speculative-decode=yes --spec-repair-threshold=10 --spec-margin-threshold=2 --spec-overlap-repair=yes
+    run_pair "q10_m3_brave" "$size" yes 10 3 yes \
+      --speculative-decode=yes --spec-repair-threshold=10 --spec-margin-threshold=3 --spec-overlap-repair=yes
+  else
+    for q in 5 8 10 12; do
+      run_pair "q${q}_m2" "$size" yes "$q" 2 no \
+        --speculative-decode=yes --spec-repair-threshold="$q" --spec-margin-threshold=2
+    done
+    run_pair "q10_m2_brave" "$size" yes 10 2 yes \
+      --speculative-decode=yes --spec-repair-threshold=10 --spec-margin-threshold=2 --spec-overlap-repair=yes
+    run_pair "q10_m3_brave" "$size" yes 10 3 yes \
+      --speculative-decode=yes --spec-repair-threshold=10 --spec-margin-threshold=3 --spec-overlap-repair=yes
+    run_pair "q10_m3" "$size" yes 10 3 no \
+      --speculative-decode=yes --spec-repair-threshold=10 --spec-margin-threshold=3
+  fi
+}
+
+echo "outdir=$outdir model=$model flush=$flush quick=$quick (sizes: 1k 20k)"
+
+run_size 1k
+run_size 20k
+
+{
+  echo "stamp=$stamp"
+  echo "model=$model flush=$flush sizes=1k,20k"
+  echo "fastq_dir=$fastq_dir"
+  echo "manifest=$manifest"
+  echo
+  echo "--- timing rows (phase=time; use these for speed) ---"
+  awk -F, 'NR==1 || $5=="time"' "$manifest" | column -t -s, 2>/dev/null \
+    || awk -F, 'NR==1 || $5=="time"' "$manifest"
+  echo
+  echo "--- keep rows (phase=keep; FASTQs for accuracy) ---"
+  awk -F, 'NR==1 || $5=="keep"' "$manifest" | column -t -s, 2>/dev/null \
+    || awk -F, 'NR==1 || $5=="keep"' "$manifest"
+} | tee "${outdir}/SUMMARY.txt"
+
+echo
+echo "Done. Pull + accuracy on main PC:"
+echo "  python3 fetch-and-minimap-spec.py --stamp ${stamp}"

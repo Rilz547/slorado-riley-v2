@@ -1,0 +1,344 @@
+#!/usr/bin/env bash
+# Record tegrastats (1 Hz) during a basecall (/dev/null) and emit CSVs.
+#
+# cpu-beam A/B (branch cpu-beam @ 664bb1f):
+#   ./docs-riley/power-record --cb off --fast 1k
+#   ./docs-riley/power-record --cb on  --hac 20k
+#
+# Other profiles (only on commits that have those flags):
+#   ./docs-riley/power-record --pre ...
+#   ./docs-riley/power-record --ov off|on ...
+#   ./docs-riley/power-record --lb baseline|best ...
+#
+# jetson_clocks: OFF. Keep nvpmodel fixed across runs.
+
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: ./docs-riley/power-record (--cb off|on | --pre | --ov off|on | --lb baseline|best | --label NAME) \
+         --fast|--hac 1k|20k [--] [extra flags...]
+
+  --cb off        GPU beam baseline: --cpu-beam=no
+  --cb on         hybrid CPU beam:   --cpu-beam=yes  (implies --stream)
+  --pre           pre-overlap style: -C/-c/-K/-p only
+  --ov off|on     Overlap v1.2 A/B
+  --lb baseline|best   load-imbalance A/B
+  --label NAME    override CSV/path label
+  --fast|--hac    model
+  1k|20k          read set
+EOF
+  exit 1
+}
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+label=""
+pre_profile=0
+cb_profile=""
+ov_profile=""
+lb_profile=""
+model_flag=""
+size_raw=""
+extra_flags=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --label)
+      [[ $# -ge 2 ]] || usage
+      label="$2"
+      shift 2
+      ;;
+    --pre)
+      pre_profile=1
+      shift
+      ;;
+    --cb)
+      [[ $# -ge 2 ]] || usage
+      cb_profile="$2"
+      shift 2
+      ;;
+    --ov)
+      [[ $# -ge 2 ]] || usage
+      ov_profile="$2"
+      shift 2
+      ;;
+    --lb)
+      [[ $# -ge 2 ]] || usage
+      lb_profile="$2"
+      shift 2
+      ;;
+    --fast|--hac)
+      model_flag="$1"
+      shift
+      ;;
+    1k|20k|1K|20K)
+      size_raw="$1"
+      shift
+      ;;
+    --)
+      shift
+      extra_flags=("$@")
+      break
+      ;;
+    -h|--help) usage ;;
+    *) echo "Unknown arg: $1" >&2; usage ;;
+  esac
+done
+
+[[ -n "$model_flag" && -n "$size_raw" ]] || usage
+n_profiles=0
+[[ "$pre_profile" -eq 1 ]] && n_profiles=$((n_profiles + 1))
+[[ -n "$cb_profile" ]] && n_profiles=$((n_profiles + 1))
+[[ -n "$ov_profile" ]] && n_profiles=$((n_profiles + 1))
+[[ -n "$lb_profile" ]] && n_profiles=$((n_profiles + 1))
+if [[ -n "$label" ]]; then
+  :
+elif [[ "$n_profiles" -ne 1 ]]; then
+  echo "ERROR: choose exactly one of --cb / --pre / --ov / --lb (or pass --label)" >&2
+  usage
+fi
+
+case "$model_flag" in
+  --fast) model=fast; flush=64 ;;
+  --hac)  model=hac;  flush=128 ;;
+  *) usage ;;
+esac
+
+size="$(echo "$size_raw" | tr '[:upper:]' '[:lower:]')"
+case "$size" in
+  1k|20k) ;;
+  *) usage ;;
+esac
+
+profile_flags=()
+profile_name="custom"
+
+if [[ "$pre_profile" -eq 1 ]]; then
+  profile_flags=()
+  profile_name=pre
+  [[ -n "$label" ]] || label=pre_overlap
+fi
+
+case "${cb_profile:-}" in
+  "")
+    ;;
+  off|no|false|gpu)
+    profile_flags=(--cpu-beam=no)
+    profile_name=cb_off
+    [[ -n "$label" ]] || label=cb_off
+    ;;
+  on|yes|true|cpu)
+    profile_flags=(--cpu-beam=yes)
+    profile_name=cb_on
+    [[ -n "$label" ]] || label=cb_on
+    ;;
+  *)
+    echo "ERROR: --cb must be off|on (got: $cb_profile)" >&2
+    exit 1
+    ;;
+esac
+
+case "${ov_profile:-}" in
+  "")
+    ;;
+  off|no|false)
+    profile_flags=(--overlap-decode=no)
+    profile_name=ov_off
+    [[ -n "$label" ]] || label=ov_off
+    ;;
+  on|yes|true)
+    profile_flags=(--overlap-decode=yes)
+    profile_name=ov_on
+    [[ -n "$label" ]] || label=ov_on
+    ;;
+  *)
+    echo "ERROR: --ov must be off|on (got: $ov_profile)" >&2
+    exit 1
+    ;;
+esac
+
+case "${lb_profile:-}" in
+  "")
+    ;;
+  baseline)
+    profile_flags=(--overlap-decode=yes --fixed-c-batch=yes)
+    profile_name=lb_baseline
+    [[ -n "$label" ]] || label=lb_baseline
+    ;;
+  best)
+    profile_flags=(--overlap-decode=yes --fixed-c-batch=no --flush-threshold="$flush")
+    profile_name=lb_best
+    [[ -n "$label" ]] || label=lb_best
+    ;;
+  *)
+    echo "ERROR: --lb must be baseline|best (got: $lb_profile)" >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$pre_profile" -eq 0 && -z "$cb_profile" && -z "$ov_profile" && -z "$lb_profile" ]]; then
+  profile_flags=()
+  profile_name=pre
+fi
+
+label_safe="$(echo "$label" | tr -c 'A-Za-z0-9._\-' '_' | sed 's/_\+/_/g; s/^_//; s/_$//')"
+
+[[ -x ./slorado ]] || { echo "ERROR: ./slorado missing; build first" >&2; exit 1; }
+[[ -x /usr/bin/tegrastats ]] || { echo "ERROR: tegrastats not found" >&2; exit 1; }
+
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+outdir="docs-riley/power-runs/${stamp}_${label_safe}_${model}_${size}"
+mkdir -p "$outdir"
+
+model_path="models/dna_r10.4.1_e8.2_400bps_${model}@v5.0.0"
+reads="test/PGXXXX230339/reads_${size}.blow5"
+[[ -e "$model_path" ]] || { echo "ERROR: missing model $model_path" >&2; exit 1; }
+[[ -e "$reads" ]] || { echo "ERROR: missing reads $reads" >&2; exit 1; }
+
+git_commit="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+git_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+nvp_mode="$(nvpmodel -q 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g' || echo unknown)"
+
+# Match prior timing campaign / cpu-beam report: -C 128, same chunk/batch/overlap.
+cmd=(./slorado basecaller
+  -C 128 -c 12288 -K 4096 -p 150
+  "${profile_flags[@]}"
+  -o /dev/null
+  "${extra_flags[@]}"
+  "$model_path"
+  "$reads"
+)
+
+{
+  echo "stamp=$stamp"
+  echo "label=$label"
+  echo "profile=$profile_name"
+  echo "model=$model size=$size"
+  echo "git_branch=$git_branch"
+  echo "git_commit=$git_commit"
+  echo "nvpmodel=$nvp_mode"
+  echo "jetson_clocks=OFF (do not enable; match prior runtime campaign)"
+  echo "outdir=$outdir"
+  echo -n "command="
+  printf '%q ' "${cmd[@]}"
+  echo
+} | tee "$outdir/meta.txt"
+
+echo
+echo "Fairness: jetson_clocks OFF · nvpmodel as above · -o /dev/null · one run at a time"
+echo "Starting tegrastats @ 1 Hz ..."
+
+TEGRA_LOG="$outdir/tegrastats.log"
+TEGRA_PID=""
+cleanup() {
+  if [[ -n "${TEGRA_PID:-}" ]] && kill -0 "$TEGRA_PID" 2>/dev/null; then
+    kill "$TEGRA_PID" 2>/dev/null || true
+    wait "$TEGRA_PID" 2>/dev/null || true
+  fi
+  tegrastats --stop 2>/dev/null || true
+  sudo -n tegrastats --stop 2>/dev/null || true
+}
+trap cleanup EXIT
+
+tegrastats --stop 2>/dev/null || true
+sudo -n tegrastats --stop 2>/dev/null || true
+
+: >"$TEGRA_LOG"
+tegrastats --interval 1000 --logfile "$TEGRA_LOG" >/dev/null 2>"$outdir/tegrastats_start.err" &
+TEGRA_PID=$!
+sleep 1.2
+if ! kill -0 "$TEGRA_PID" 2>/dev/null || [[ ! -s "$TEGRA_LOG" ]]; then
+  kill "$TEGRA_PID" 2>/dev/null || true
+  wait "$TEGRA_PID" 2>/dev/null || true
+  TEGRA_PID=""
+  echo "tegrastats needs elevated privileges; trying sudo ..."
+  : >"$TEGRA_LOG"
+  sudo tegrastats --interval 1000 --logfile "$TEGRA_LOG" >/dev/null 2>"$outdir/tegrastats_start.err" &
+  TEGRA_PID=$!
+  sleep 1.2
+  if ! kill -0 "$TEGRA_PID" 2>/dev/null || [[ ! -s "$TEGRA_LOG" ]]; then
+    echo "ERROR: could not start tegrastats (see $outdir/tegrastats_start.err)" >&2
+    exit 1
+  fi
+fi
+
+echo "Running basecall ..."
+t0="$(date +%s.%N)"
+set +e
+"${cmd[@]}" >"$outdir/slorado.stdout" 2>"$outdir/slorado.log"
+rc=$?
+set -e
+t1="$(date +%s.%N)"
+wall_s="$(awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.3f", b - a }')"
+
+cleanup
+trap - EXIT
+TEGRA_PID=""
+
+real_s="$(grep -E '\[main\] Real time:' "$outdir/slorado.log" 2>/dev/null | tail -1 \
+  | sed -n 's/.*Real time: \([0-9.]*\) sec.*/\1/p' || true)"
+if [[ -n "$real_s" ]]; then
+  wall_report="$real_s"
+  wall_note="slorado Real time (excludes startup)"
+else
+  wall_report="$wall_s"
+  wall_note="shell wall (slorado Real time missing)"
+fi
+
+echo "basecall exit=$rc shell_wall_s=$wall_s real_s=${real_s:-?} → summary wall_s=$wall_report ($wall_note)"
+if [[ "$rc" -ne 0 ]]; then
+  echo "WARNING: slorado exited $rc — see $outdir/slorado.log" >&2
+fi
+
+if [[ ! -s "$TEGRA_LOG" ]]; then
+  echo "ERROR: empty tegrastats log at $TEGRA_LOG" >&2
+  exit 1
+fi
+
+all_sum_args=(--all-summaries docs-riley/power-runs/all_summaries.csv)
+if [[ "$rc" -ne 0 ]]; then
+  all_sum_args=()
+  echo "NOTE: exit!=0 → skipping append to all_summaries.csv" >&2
+fi
+
+cmd_str="$(printf '%q ' "${cmd[@]}")"
+python3 docs-riley/parse_tegrastats.py "$TEGRA_LOG" \
+  --out-dir "$outdir" \
+  "${all_sum_args[@]}" \
+  --dt 1.0 \
+  --label "$label" \
+  --model "$model" \
+  --size "$size" \
+  --git-commit "$git_commit" \
+  --git-branch "$git_branch" \
+  --nvpmodel "$nvp_mode" \
+  --wall-s "$wall_report" \
+  --command "$cmd_str"
+
+if [[ "$rc" -ne 0 ]]; then
+  fail_dir="docs-riley/power-runs/_failed_$(basename "$outdir")"
+  mv "$outdir" "$fail_dir"
+  echo "Moved failed run → $fail_dir" >&2
+  exit "$rc"
+fi
+
+python3 - <<PY
+import csv
+from pathlib import Path
+p = Path("$outdir") / "summary.csv"
+with p.open() as f:
+    r = next(csv.DictReader(f))
+peak = float(r["peak_power_mW"])
+mean = float(r["mean_power_mW"])
+energy = float(r["energy_J"])
+print(f"sanity: peak={peak:.0f} mW mean={mean:.0f} mW energy={energy:.1f} J")
+if peak < mean:
+    raise SystemExit("ERROR: peak_power < mean_power")
+print("note: energy from tegrastats samples; wall_s is basecall Real time when available")
+PY
+
+echo
+echo "Done → $outdir"
+echo "Rolling summary → docs-riley/power-runs/all_summaries.csv"
