@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# Power matrix helper.
+#
+# cpu-beam A/B (branch cpu-beam @ 664bb1f — rebuild first):
+#   ./docs-riley/power-sweep --cpu-beam
+#   ./docs-riley/power-sweep --cpu-beam --only fast_1k,hac_1k
+#
+# For each model×size: cb_off (GPU beam) then cb_on (--cpu-beam=yes).
+# Note: cb_on HAC 20k can take ~40+ minutes from prior timing.
+#
+# Other modes:
+#   ./docs-riley/power-sweep --pre
+#   ./docs-riley/power-sweep --overlap
+#   ./docs-riley/power-sweep --loadimb
+
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  ./docs-riley/power-sweep --cpu-beam [--only a,b,...]
+  ./docs-riley/power-sweep --pre [--only a,b,...]
+  ./docs-riley/power-sweep --overlap [--only a,b,...]
+  ./docs-riley/power-sweep --loadimb [--only a,b,...]
+
+  --cpu-beam     cb_off then cb_on for each cell (branch cpu-beam)
+  --pre          pre-overlap baseline
+  --overlap      ov_off then ov_on
+  --loadimb      lb_baseline then lb_best
+  --only LIST    subset of: fast_1k,hac_1k,fast_20k,hac_20k
+EOF
+  exit 1
+}
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+mode=""
+only=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cpu-beam|--cb)
+      mode=cpu-beam
+      shift
+      ;;
+    --pre)
+      mode=pre
+      shift
+      ;;
+    --overlap)
+      mode=overlap
+      shift
+      ;;
+    --loadimb)
+      mode=loadimb
+      shift
+      ;;
+    --only)
+      [[ $# -ge 2 ]] || usage
+      only="$2"
+      shift 2
+      ;;
+    -h|--help) usage ;;
+    *) echo "Unknown arg: $1" >&2; usage ;;
+  esac
+done
+
+[[ -n "$mode" ]] || usage
+
+default_jobs=(fast_1k hac_1k fast_20k hac_20k)
+if [[ -n "$only" ]]; then
+  IFS=',' read -r -a jobs <<<"$only"
+else
+  jobs=("${default_jobs[@]}")
+fi
+
+job_to_flags() {
+  case "$1" in
+    fast_1k)  mf=--fast; sz=1k ;;
+    fast_20k) mf=--fast; sz=20k ;;
+    hac_1k)   mf=--hac;  sz=1k ;;
+    hac_20k)  mf=--hac;  sz=20k ;;
+    *) echo "ERROR: bad job '$1'" >&2; exit 1 ;;
+  esac
+}
+
+echo "power-sweep mode=$mode jobs=${jobs[*]}"
+echo
+
+case "$mode" in
+  cpu-beam)
+    echo "A/B: for each cell → --cb off (GPU beam), then --cb on (CPU beam hybrid)"
+    echo "  cb_off: --cpu-beam=no"
+    echo "  cb_on:  --cpu-beam=yes"
+    echo "  shared: -C 128 -c 12288 -K 4096 -p 150 -o /dev/null"
+    echo
+    for job in "${jobs[@]}"; do
+      job_to_flags "$job"
+      for cb in off on; do
+        echo "########## cb_${cb} $job ##########"
+        sleep 8
+        ./docs-riley/power-record --cb "$cb" "$mf" "$sz"
+        echo
+      done
+    done
+    echo "All cpu-beam A/B jobs done."
+    ;;
+  pre)
+    echo "Baseline: label=pre_overlap"
+    echo
+    for job in "${jobs[@]}"; do
+      job_to_flags "$job"
+      echo "########## pre_overlap $job ##########"
+      sleep 8
+      ./docs-riley/power-record --pre "$mf" "$sz"
+      echo
+    done
+    echo "All pre-overlap jobs done."
+    ;;
+  overlap)
+    for job in "${jobs[@]}"; do
+      job_to_flags "$job"
+      for ov in off on; do
+        echo "########## ov_${ov} $job ##########"
+        sleep 8
+        ./docs-riley/power-record --ov "$ov" "$mf" "$sz"
+        echo
+      done
+    done
+    echo "All overlap A/B jobs done."
+    ;;
+  loadimb)
+    for job in "${jobs[@]}"; do
+      job_to_flags "$job"
+      for lb in baseline best; do
+        echo "########## lb_${lb} $job ##########"
+        sleep 8
+        ./docs-riley/power-record --lb "$lb" "$mf" "$sz"
+        echo
+      done
+    done
+    echo "All load-imbalance A/B jobs done."
+    ;;
+esac
+
+echo "See docs-riley/power-runs/all_summaries.csv"

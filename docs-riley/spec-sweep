@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Speculative-decode threshold sweep vs docs-riley/best FAST flags.
+# Usage: ./docs-riley/spec-sweep [--fast|--hac] 1k|20k [thresholds...]
+# Default thresholds: 8 10 12 14
+set -euo pipefail
+
+model_flag="${1:---fast}"
+size="${2:-1k}"
+shift 2 || true
+thresholds=("$@")
+if [[ ${#thresholds[@]} -eq 0 ]]; then
+  thresholds=(8 10 12 14)
+fi
+
+case "$model_flag" in
+  --fast) model=fast; flush=64 ;;
+  --hac)  model=hac;  flush=128 ;;
+  *) echo "Usage: $0 --fast|--hac 1k|20k [thr...]" >&2; exit 1 ;;
+esac
+
+model_path="models/dna_r10.4.1_e8.2_400bps_${model}@v5.0.0"
+reads="test/PGXXXX230339/reads_${size}.blow5"
+base_flags=(-C 128 -c 12288 -K 4096 -p 150 --overlap-decode=yes --fixed-c-batch=no --flush-threshold="$flush" -o /dev/null)
+
+run_one() {
+  local tag="$1"; shift
+  echo "=== ${tag} ==="
+  ./slorado basecaller "$@" 2>&1 | tee "/tmp/spec-${tag}-${model}-${size}.log" \
+    | grep -E 'load-imbalance|speculative:|Real time' || true
+}
+
+run_one "baseline" "${base_flags[@]}" "$model_path" "$reads"
+
+for thr in "${thresholds[@]}"; do
+  run_one "thr${thr}" "${base_flags[@]}" \
+    --speculative-decode=yes --spec-repair-threshold="$thr" --spec-margin-threshold=2 \
+    "$model_path" "$reads"
+done
+
+run_one "brave" "${base_flags[@]}" \
+  --speculative-decode=yes --spec-repair-threshold=10 --spec-margin-threshold=2 \
+  --spec-overlap-repair=yes \
+  "$model_path" "$reads"
+
+run_one "brave-m3" "${base_flags[@]}" \
+  --speculative-decode=yes --spec-repair-threshold=10 --spec-margin-threshold=3 \
+  --spec-overlap-repair=yes \
+  "$model_path" "$reads"
+
+run_one "agreement" "${base_flags[@]}" \
+  --spec-agreement=yes \
+  "$model_path" "$reads"
