@@ -1,0 +1,322 @@
+{
+  "_comment": "Final-campaign configuration. Cell id = <dtype>_<model>_<size>, e.g. dna_fast_1k, rna_hac_20k, dna_fast_500k (a two-part id such as fast_1k means DNA). Every stage runs with shared_flags unless the stage gives its own 'flags' (paper_xavier); extra 'args' / per-model 'model_args' are appended. 'upstream' uses the shared flags too (the June upstream baselines used -C 256 for FAST and wrote a FASTQ; they are reported separately as legacy data).",
+  "shared_flags": [
+    "-C",
+    "128",
+    "-c",
+    "12288",
+    "-K",
+    "4096",
+    "-p",
+    "150"
+  ],
+  "models": {
+    "dna": {
+      "fast": "models/dna_r10.4.1_e8.2_400bps_fast@v5.0.0",
+      "hac": "models/dna_r10.4.1_e8.2_400bps_hac@v5.0.0"
+    },
+    "rna": {
+      "fast": "models/rna004_130bps_fast@v5.1.0",
+      "hac": "models/rna004_130bps_hac@v5.1.0"
+    }
+  },
+  "references": {
+    "dna": {
+      "fasta": "~/slorado/hg38noAlt.fa",
+      "minimap2": [
+        "-cx",
+        "map-ont",
+        "--secondary=no"
+      ]
+    },
+    "rna": {
+      "fasta": "~/data/ref/gencode.v40.transcripts.fa",
+      "minimap2": [
+        "-cx",
+        "splice",
+        "-uf",
+        "-k14",
+        "--secondary=no"
+      ]
+    }
+  },
+  "datasets": {
+    "dna_1k": {
+      "dtype": "dna",
+      "size": "1k",
+      "path": "test/PGXXXX230339/reads_1k.blow5",
+      "reads": 1000,
+      "samples": 55715189,
+      "reps": 5,
+      "modes": [
+        "A",
+        "B"
+      ],
+      "warmup": true,
+      "models": [
+        "fast",
+        "hac"
+      ],
+      "default": true
+    },
+    "dna_20k": {
+      "dtype": "dna",
+      "size": "20k",
+      "path": "test/PGXXXX230339/reads_20k.blow5",
+      "reads": 20000,
+      "samples": 1121019457,
+      "reps": 3,
+      "modes": [
+        "A",
+        "B"
+      ],
+      "warmup": true,
+      "models": [
+        "fast",
+        "hac"
+      ],
+      "default": true
+    },
+    "rna_1k": {
+      "dtype": "rna",
+      "size": "1k",
+      "path": "~/data/rna_1k.blow5",
+      "reads": 1000,
+      "samples": 36686101,
+      "reps": 5,
+      "modes": [
+        "A",
+        "B"
+      ],
+      "warmup": true,
+      "models": [
+        "fast",
+        "hac"
+      ],
+      "default": true
+    },
+    "rna_20k": {
+      "dtype": "rna",
+      "size": "20k",
+      "path": "~/data/PNXRXX240011_reads_20k.blow5",
+      "reads": 20000,
+      "samples": 772479808,
+      "reps": 3,
+      "modes": [
+        "A",
+        "B"
+      ],
+      "warmup": true,
+      "models": [
+        "fast",
+        "hac"
+      ],
+      "default": true
+    },
+    "dna_500k": {
+      "dtype": "dna",
+      "size": "500k",
+      "path": "~/data/PGXXXX230339_reads_500k.blow5",
+      "reads": 500000,
+      "samples": 28107529368,
+      "reps": 1,
+      "modes": [
+        "B"
+      ],
+      "warmup": false,
+      "models": [
+        "fast"
+      ],
+      "default": false
+    },
+    "dna_chr22": {
+      "dtype": "dna",
+      "size": "190k",
+      "path": "~/data/PGXXXX230339_reads_chr22.blow5",
+      "reads": 189928,
+      "samples": 12176764640,
+      "reps": 1,
+      "modes": [
+        "B"
+      ],
+      "warmup": false,
+      "models": [
+        "fast"
+      ],
+      "default": false
+    }
+  },
+  "run_limits": {
+    "stall_s": 900,
+    "cap_factor": 2.5,
+    "floor_rate_samples_per_s": {
+      "fast": 3000000,
+      "hac": 800000
+    },
+    "min_cap_s": 180,
+    "attempts": 2
+  },
+  "gate": {
+    "tj_C": 55.0,
+    "timeout_s": 300
+  },
+  "power": {
+    "hz": 20,
+    "pre_shoulder_s": 3.0,
+    "post_shoulder_s": 4.0,
+    "idle_s": 60
+  },
+  "canary_python": "~/slorado_venv/bin/python3",
+  "worktree_root": "~/bench-stages",
+  "worktrees": {
+    "upstream": {
+      "commit": "754a74d",
+      "note": "unmodified upstream BonsonW/slorado main (true original)"
+    },
+    "paper": {
+      "commit": "406ab8c",
+      "note": "commit the Slorado/Openfish preprint used on the Jetson AGX Xavier (Table S7); ancestor of 754a74d"
+    },
+    "pre_overlap": {
+      "commit": "8873209",
+      "note": "start of the optimisation work, before overlap decode"
+    },
+    "overlap": {
+      "commit": "7cec6c5",
+      "note": "overlap decode v1.2"
+    },
+    "loadimb": {
+      "commit": "65246f2",
+      "note": "narrow batches + flush threshold"
+    },
+    "spec": {
+      "commit": "49ac641",
+      "note": "speculative decode (re-created greedy draft)"
+    },
+    "cpubeam": {
+      "commit": "664bb1f",
+      "note": "CPU beam hybrid experiment (dead end)"
+    }
+  },
+  "stage_order": [
+    "upstream",
+    "ov_off",
+    "ov_on",
+    "lb_baseline",
+    "lb_best",
+    "spec",
+    "cb_off",
+    "cb_on",
+    "paper_xavier"
+  ],
+  "rna_stages": [
+    "upstream",
+    "ov_on",
+    "lb_best",
+    "spec"
+  ],
+  "stages": {
+    "upstream": {
+      "worktree": "upstream",
+      "args": [],
+      "model_args": {}
+    },
+    "paper_xavier": {
+      "worktree": "paper",
+      "flags": [
+        "-t",
+        "8",
+        "-B",
+        "500M",
+        "-K",
+        "2000",
+        "-c",
+        "10000",
+        "-C",
+        "200"
+      ],
+      "args": [],
+      "model_args": {},
+      "default_cells": [
+        "dna_fast_500k"
+      ],
+      "note": "Table S7 command line (Jetson AGX Xavier, FAST, HG002-dna-500k); use with mode B and the 500k dataset for the cross-device comparison"
+    },
+    "pre_overlap": {
+      "worktree": "pre_overlap",
+      "args": [],
+      "model_args": {},
+      "invalid": "Decodes garbage: at 8873209 slorado transposes the model output to TNC but the pinned openfish (3d95491) reads NTC, so batches >1 are scrambled (smoke test 2026-10-22: 0/1000 reads match upstream on DNA and RNA, ~30% sequence similarity). Fixed from v1.0 (e00bada). Use 'upstream' (754a74d) as the pre-overlap baseline."
+    },
+    "ov_off": {
+      "worktree": "overlap",
+      "args": [
+        "--overlap-decode=no"
+      ],
+      "model_args": {}
+    },
+    "ov_on": {
+      "worktree": "overlap",
+      "args": [
+        "--overlap-decode=yes"
+      ],
+      "model_args": {}
+    },
+    "lb_baseline": {
+      "worktree": "loadimb",
+      "args": [
+        "--overlap-decode=yes",
+        "--fixed-c-batch=yes"
+      ],
+      "model_args": {}
+    },
+    "lb_best": {
+      "worktree": "loadimb",
+      "args": [
+        "--overlap-decode=yes",
+        "--fixed-c-batch=no"
+      ],
+      "model_args": {
+        "fast": [
+          "--flush-threshold=64"
+        ],
+        "hac": [
+          "--flush-threshold=128"
+        ]
+      }
+    },
+    "spec": {
+      "worktree": "spec",
+      "args": [
+        "--overlap-decode=yes",
+        "--fixed-c-batch=no",
+        "--speculative-decode=yes",
+        "--spec-repair-threshold=10",
+        "--spec-margin-threshold=2",
+        "--spec-overlap-repair=yes"
+      ],
+      "model_args": {
+        "fast": [
+          "--flush-threshold=64"
+        ],
+        "hac": [
+          "--flush-threshold=128"
+        ]
+      }
+    },
+    "cb_off": {
+      "worktree": "cpubeam",
+      "args": [
+        "--cpu-beam=no"
+      ],
+      "model_args": {}
+    },
+    "cb_on": {
+      "worktree": "cpubeam",
+      "args": [
+        "--cpu-beam=yes"
+      ],
+      "model_args": {}
+    }
+  }
+}
