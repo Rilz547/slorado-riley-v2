@@ -97,6 +97,48 @@ def spec_columns(rec: dict) -> dict:
     return out
 
 
+EXCLUDED_FILE = bench.OUT_ROOT / "excluded-runs.json"
+OUTLIER_PCT = 3.0  # rule stated in HARNESS-FROZEN.md: a run more than 3 % above its cell median is flagged
+
+
+def load_excluded() -> dict[str, str]:
+    """run_id -> reason, from bench-runs/excluded-runs.json (written by `analyze.py outliers --write`; edit or delete to undo)."""
+    try:
+        return json.loads(EXCLUDED_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def find_outliers(records: list[dict]) -> list[tuple[dict, float]]:
+    """(record, % above the cell median) for timed OK runs more than OUTLIER_PCT above the median of their (stage, cell, mode) group (n >= 3)."""
+    g: dict[tuple, list[dict]] = defaultdict(list)
+    for r in records:
+        if r.get("kind") == "timed" and r.get("status") == "ok":
+            g[(r["stage"], r["cell"], r["mode"])].append(r)
+    out = []
+    for v in g.values():
+        if len(v) < 3:
+            continue
+        med = st.median(r["real_s"] for r in v)
+        out += [(r, 100 * (r["real_s"] / med - 1)) for r in v if r["real_s"] > med * (1 + OUTLIER_PCT / 100)]
+    return out
+
+
+def outliers(args: argparse.Namespace) -> int:
+    recs = bench.load_records()
+    found = find_outliers(recs)
+    print(f"runs more than {OUTLIER_PCT:.0f} % above their (stage, cell, mode) median (timed, ok, n >= 3):")
+    new = {}
+    for r, pct in sorted(found, key=lambda x: (x[0]["stage"], x[0]["cell"], x[0]["mode"], x[0]["rep"])):
+        print(f"  {r['stage']:11} {r['cell']:14} mode {r['mode']} rep {r['rep']}: {r['real_s']:.2f} s ({pct:+.1f} %)  {r['run_id']}")
+        new[r["run_id"]] = f"{pct:+.1f} % above the cell median (rule: > {OUTLIER_PCT:.0f} %); {r['stage']} {r['cell']} mode {r['mode']} rep {r['rep']}"
+    if args.write:
+        merged = {**load_excluded(), **new}
+        EXCLUDED_FILE.write_text(json.dumps(merged, indent=1) + "\n")
+        print(f"wrote {EXCLUDED_FILE} ({len(merged)} run(s) excluded from csv/tables; validate and equiv still use every run)")
+    return 0
+
+
 def tidy(records: list[dict]) -> list[dict]:
     per_stage, glob = idle_power(records)
     # reads/bases per (stage, cell) from mode B runs, to normalise mode A rows
@@ -105,8 +147,9 @@ def tidy(records: list[dict]) -> list[dict]:
         if r.get("kind") == "timed" and r.get("status") == "ok" and r.get("mode") == "B" and r.get("reads_out"):
             sizes[(r["stage"], r["cell"])] = (r["reads_out"], r["bases_out"])
     rows = []
+    excluded = load_excluded()
     for r in records:
-        if r.get("kind") != "timed" or r.get("status") != "ok":
+        if r.get("kind") != "timed" or r.get("status") != "ok" or r.get("run_id") in excluded:
             continue
         cell = norm_cell(r["cell"])
         row = {
@@ -249,12 +292,39 @@ def tables(args: argparse.Namespace) -> int:
             body.append(line)
         table(f"Median identity (minimap2), Δ in percentage points vs `{base}`", ["stage", *CELLS], body)
 
+    excl = load_excluded()
+    if excl:
+        out.append("\n### Excluded runs\n\nExcluded from every table above (outlier rule: more than %.0f %% above the cell median; `bench-runs/excluded-runs.json`):\n" % OUTLIER_PCT)
+        out += [f"- `{k}`: {v}" for k, v in excl.items()]
     text = "\n".join(out) + "\n"
     if args.md:
         Path(args.md).write_text(text)
         print(f"wrote {args.md}")
     else:
         print(text)
+    return 0
+
+
+def summary_cmd(args: argparse.Namespace) -> int:
+    """One row per (cell, mode, stage): n, mean/sd/min/max of Real time and the change against the baseline stage (default upstream)."""
+    rows = tidy(bench.load_records())
+    g = groups(rows, "t_real_s")
+    base = args.baseline
+    out = []
+    for (stage, cell, mode), v in sorted(g.items(), key=lambda kv: (kv[0][1], kv[0][2], kv[0][0])):
+        m, sd = mean_sd(v)
+        b = g.get((base, cell, mode))
+        bm = mean_sd(b)[0] if b else None
+        out.append({"cell": cell, "mode": mode, "stage": stage, "n": len(v), "mean_s": round(m, 3), "sd_s": round(sd, 3),
+                    "min_s": round(min(v), 3), "max_s": round(max(v), 3), f"baseline_{base}_mean_s": round(bm, 3) if bm else "",
+                    "time_change_pct": round((m - bm) / bm * 100, 2) if bm else "", "speedup_x": round(bm / m, 3) if bm else "",
+                    "throughput_gain_pct": round((bm / m - 1) * 100, 2) if bm else ""})
+    path = Path(args.out)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(out[0].keys()))
+        w.writeheader()
+        w.writerows(out)
+    print(f"wrote {path} ({len(out)} rows)")
     return 0
 
 
@@ -460,6 +530,13 @@ def main() -> int:
     p.add_argument("--md", default=None)
     p.add_argument("--accuracy", nargs="*", default=None, help="minimap_accuracy*.csv from fetch-and-minimap.py")
     p.set_defaults(fn=tables)
+    p = sub.add_parser("summary", help="one row per cell/mode/stage with mean, sd and the change against a baseline stage")
+    p.add_argument("--baseline", default="upstream")
+    p.add_argument("--out", default=str(bench.OUT_ROOT / "summary-by-cell.csv"))
+    p.set_defaults(fn=summary_cmd)
+    p = sub.add_parser("outliers", help="list (and with --write exclude from csv/tables) runs > 3 %% above their cell median")
+    p.add_argument("--write", action="store_true")
+    p.set_defaults(fn=outliers)
     sub.add_parser("validate").set_defaults(fn=validate)
     p = sub.add_parser("equiv", help="V7: compare kept FASTQs of every stage with the reference stage")
     p.add_argument("--ref", default="upstream")
