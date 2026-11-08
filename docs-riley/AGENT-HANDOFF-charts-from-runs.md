@@ -50,5 +50,5 @@ Also confirm: the rows excluded from `runs.csv` match `excluded-runs.json` (3 ru
 ## Things that look odd but are known (do not "fix")
 - `ov_on` DNA FAST 20k has n = 2 per mode (two outlier runs excluded by the pre-stated 3 % rule); an independent replicate block (`rerun-ov_on-fast20k.jsonl`, 176.5 s mean, n = 3) agrees within 1.6 %. Mention it in the caption; do not average the two blocks.
 - `spec` has no 500k row (5 hung attempts); `cb_on` has no HAC 20k row (the harness stall limit); `paper_xavier` exists only at 500k.
-- `upstream → ov_off` is −17 % on FAST *with overlap off*: it is the largest single step and is **not** attributable to overlap (the fork also changed openfish and buffer handling). Caption it as "pre-overlap changes", not "overlap".
+- `upstream → ov_off` is −17 % on FAST *with overlap off*: it is the largest single step and is **not** attributable to overlap. A split run (`bench-runs/variants-bundle.jsonl`, not for the main charts) puts all of it at commit `e00bada` (stream-aware decode + fork openfish); instrumentation costs +3 % and the pinned-buffer commit 0 %. Caption it as "pre-overlap changes", not "overlap".
 - Map rate above 100 % in the accuracy CSVs is PAF lines per read (supplementary alignments), not an error.

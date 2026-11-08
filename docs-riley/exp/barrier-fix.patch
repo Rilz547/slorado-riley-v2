@@ -1,0 +1,15 @@
+diff --git a/src/beam_search_cuda.h b/src/beam_search_cuda.h
+index a500b0f..fd3a0cf 100644
+--- a/src/beam_search_cuda.h
++++ b/src/beam_search_cuda.h
+@@ -524,6 +524,10 @@ __global__ void beam_search(
+                 __syncthreads();
+             }
+ 
++            // Every thread has read bs_active (`if (!bs_active) break;`) before tid 0 reuses it below. Without this barrier a
++            // warp that reads late sees the 1 written below, stays in the loop and desynchronises the block's barriers.
++            __syncthreads();
++
+             // If we made 10 guesses and didn't find a suitable score, a couple of things may have happened:
+             // 1: we just haven't completed the binary search yet (there is a good score in there somewhere but we didn't find it)
+             //  - in this case we should just pick the higher of the two current search limits to get the top N elements)

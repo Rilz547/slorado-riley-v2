@@ -1,0 +1,214 @@
+diff --git a/src/beam_search_cuda.h b/src/beam_search_cuda.h
+index a500b0f..94d6ac9 100644
+--- a/src/beam_search_cuda.h
++++ b/src/beam_search_cuda.h
+@@ -62,7 +62,7 @@ static __global__ void generate_sequence(
+     const float shift,
+     const float scale
+ ) {
+-    const uint64_t chunk = blockIdx.x + (blockIdx.y * gridDim.x);
++    const uint64_t chunk = (blockIdx.x + (blockIdx.y * gridDim.x)) * blockDim.x + threadIdx.x;
+ 
+     if (chunk >= args.batch_size) {
+ 		return;
+@@ -649,7 +649,7 @@ static __global__ void compute_qual_data(
+     float *_qual_data,
+     const float posts_scale
+ ) {
+-    const uint64_t chunk = blockIdx.x + (blockIdx.y * gridDim.x);
++    const uint64_t chunk = (blockIdx.x + (blockIdx.y * gridDim.x)) * blockDim.x + threadIdx.x;
+     if (chunk >= beam_args.batch_size) {
+ 		return;
+ 	}
+diff --git a/src/decode_cuda.c b/src/decode_cuda.c
+index 1d038cb..6e11d30 100644
+--- a/src/decode_cuda.c
++++ b/src/decode_cuda.c
+@@ -7,6 +7,8 @@
+ 
+ #include <openfish/openfish.h>
+ #include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
+ #include "openfish_defs.h"
+ #include "scan_cuda.h"
+ #include "beam_search_cuda.h"
+@@ -234,6 +236,31 @@ void openfish_gpubuf_free(
+     free(gpubuf);
+ }
+ 
++/* ---- EXPERIMENT PROBES (docs-riley/exp). OPENFISH_EXP=<comma list>; unset = original behaviour. ---- */
++typedef struct {
++    int dup_bwd, dup_fwd, dup_beam, dup_draft, dup_qual, dup_gen, skip_repair_scans, pack32;
++} exp_flags_t;
++
++static exp_flags_t exp_flags(void) {
++    static int init = 0;
++    static exp_flags_t f;
++    if (!init) {
++        const char *e = getenv("OPENFISH_EXP");
++        if (e != NULL) {
++            f.dup_bwd = strstr(e, "dup_bwd") != NULL;
++            f.dup_fwd = strstr(e, "dup_fwd") != NULL;
++            f.dup_beam = strstr(e, "dup_beam") != NULL;
++            f.dup_draft = strstr(e, "dup_draft") != NULL;
++            f.dup_qual = strstr(e, "dup_qual") != NULL;
++            f.dup_gen = strstr(e, "dup_gen") != NULL;
++            f.skip_repair_scans = strstr(e, "skip_repair_scans") != NULL;
++            f.pack32 = strstr(e, "pack32") != NULL;
++        }
++        init = 1;
++    }
++    return f;
++}
++
+ /* Pick event-based timing when overlapping (stream != NULL); else host timers. */
+ #define OPENFISH_TIME_DECODE(stats_ptr, field, stream_handle, overlap, ...) \
+     do { \
+@@ -297,6 +324,9 @@ static void decode_gpu_impl(
+     dim3 block_size_beam(MAX_BEAM_WIDTH * NUM_BASES, 1, 1);
+     dim3 block_size_gen(1, 1, 1);
+ 	dim3 grid_size(batch_size, 1, 1);
++    const exp_flags_t xf = exp_flags();
++    dim3 gen_block(xf.pack32 ? 32 : 1, 1, 1);
++    dim3 gen_grid(xf.pack32 ? (batch_size + 31) / 32 : batch_size, 1, 1);
+ 
+     OPENFISH_LOG_TRACE("scores tensor dim (NTC): %d, %d, %d (host_slot=%d)", batch_size, n_timesteps, n_channels, host_slot);
+     openfish_decode_stats_note_dims(stats, n_timesteps, batch_size, n_channels);
+@@ -382,19 +412,33 @@ static void decode_gpu_impl(
+         );
+     } else {
+         OPENFISH_TIME_DECODE(stats, time_bwd_scan, s, overlap_async,
+-            bwd_scan<half><<<grid_size,block_size,0,s>>>(scan_args, scores_NTC, gpubuf->bwd_NTC);
+-            checkCudaError();
++            if (!(xf.skip_repair_scans && !greedy)) {
++                bwd_scan<half><<<grid_size,block_size,0,s>>>(scan_args, scores_NTC, gpubuf->bwd_NTC);
++                checkCudaError();
++            }
++            if (xf.dup_bwd) {
++                bwd_scan<half><<<grid_size,block_size,0,s>>>(scan_args, scores_NTC, gpubuf->bwd_NTC);
++                checkCudaError();
++            }
+             if (!overlap_async) { OPENFISH_PHASE_SYNC(stats); }
+         );
+ 
+         if (greedy) {
+             OPENFISH_TIME_DECODE(stats, time_draft, s, overlap_async,
+-                greedy_search<half><<<grid_size,block_size_gen,0,s>>>(
++                greedy_search<half><<<gen_grid,gen_block,0,s>>>(
+                     beam_args, scores_NTC, gpubuf->bwd_NTC,
+                     (state_t *)gpubuf->states, gpubuf->moves, gpubuf->margins,
+                     fixed_stay_score, score_scale
+                 );
+                 checkCudaError();
++                if (xf.dup_draft) {
++                    greedy_search<half><<<gen_grid,gen_block,0,s>>>(
++                        beam_args, scores_NTC, gpubuf->bwd_NTC,
++                        (state_t *)gpubuf->states, gpubuf->moves, gpubuf->margins,
++                        fixed_stay_score, score_scale
++                    );
++                    checkCudaError();
++                }
+                 if (!overlap_async) { OPENFISH_PHASE_SYNC(stats); }
+             );
+         } else {
+@@ -405,20 +449,50 @@ static void decode_gpu_impl(
+                     beam_cut, fixed_stay_score, score_scale
+                 );
+                 checkCudaError();
++                if (xf.dup_beam) {
++                    beam_search<half><<<grid_size,block_size_beam,num_states*sizeof(float),s>>>(
++                        beam_args, scores_NTC, gpubuf->bwd_NTC,
++                        (state_t *)gpubuf->states, gpubuf->moves, (beam_element_t *)gpubuf->beam_vector,
++                        beam_cut, fixed_stay_score, score_scale
++                    );
++                    checkCudaError();
++                }
+                 if (!overlap_async) { OPENFISH_PHASE_SYNC(stats); }
+             );
+         }
+ 
+         OPENFISH_TIME_DECODE(stats, time_fwd_post_scan, s, overlap_async,
+-            fwd_post_scan<half><<<grid_size,block_size,0,s>>>(scan_args, scores_NTC, gpubuf->bwd_NTC, gpubuf->post_NTC);
+-            checkCudaError();
++            if (!(xf.skip_repair_scans && !greedy)) {
++                fwd_post_scan<half><<<grid_size,block_size,0,s>>>(scan_args, scores_NTC, gpubuf->bwd_NTC, gpubuf->post_NTC);
++                checkCudaError();
++            }
++            if (xf.dup_fwd) {
++                fwd_post_scan<half><<<grid_size,block_size,0,s>>>(scan_args, scores_NTC, gpubuf->bwd_NTC, gpubuf->post_NTC);
++                checkCudaError();
++            }
+             if (!overlap_async) { OPENFISH_PHASE_SYNC(stats); }
+         );
+     }
+ 
+     OPENFISH_LOG_TRACE("%s", "compute qual data...");
+     OPENFISH_TIME_DECODE(stats, time_qual_data, s, overlap_async,
+-        compute_qual_data<<<grid_size,block_size_gen,0,s>>>(
++        if (xf.dup_qual) {
++            /* compute_qual_data rewrites states in place (% NUM_BASES): run the extra copy on a scratch copy */
++            static state_t *scratch = NULL;
++            static size_t scratch_n = 0;
++            const size_t need = (size_t)batch_size * n_timesteps;
++            if (need > scratch_n) {
++                if (scratch != NULL) { cudaFree(scratch); }
++                cudaMalloc((void **)&scratch, need * sizeof(state_t));
++                checkCudaError();
++                scratch_n = need;
++            }
++            cudaMemcpyAsync(scratch, gpubuf->states, need * sizeof(state_t), cudaMemcpyDeviceToDevice, s);
++            checkCudaError();
++            compute_qual_data<<<gen_grid,gen_block,0,s>>>(beam_args, gpubuf->post_NTC, scratch, gpubuf->qual_data, 1.0f);
++            checkCudaError();
++        }
++        compute_qual_data<<<gen_grid,gen_block,0,s>>>(
+             beam_args,
+             gpubuf->post_NTC,
+             (state_t *)gpubuf->states,
+@@ -431,7 +505,7 @@ static void decode_gpu_impl(
+ 
+     OPENFISH_LOG_TRACE("%s", "gen sequence...");
+     OPENFISH_TIME_DECODE(stats, time_gen_sequence, s, overlap_async,
+-        generate_sequence<<<grid_size,block_size_gen,0,s>>>(
++        generate_sequence<<<gen_grid,gen_block,0,s>>>(
+             beam_args,
+             gpubuf->moves,
+             (state_t *)gpubuf->states,
+@@ -444,6 +518,21 @@ static void decode_gpu_impl(
+             q_scale
+         );
+         checkCudaError();
++        if (xf.dup_gen) {
++            generate_sequence<<<gen_grid,gen_block,0,s>>>(
++                beam_args,
++                gpubuf->moves,
++                (state_t *)gpubuf->states,
++                gpubuf->qual_data,
++                gpubuf->base_probs,
++                gpubuf->total_probs,
++                gpubuf->sequence,
++                gpubuf->qstring,
++                q_shift,
++                q_scale
++            );
++            checkCudaError();
++        }
+         if (!overlap_async) { OPENFISH_PHASE_SYNC(stats); }
+     );
+ 
+diff --git a/src/greedy_search_cuda.h b/src/greedy_search_cuda.h
+index ce7d8ab..87ef6de 100644
+--- a/src/greedy_search_cuda.h
++++ b/src/greedy_search_cuda.h
+@@ -32,8 +32,8 @@ __global__ void greedy_search(
+     const float fixed_stay_score,
+     const float score_scale
+ ) {
+-    const uint64_t chunk = blockIdx.x + (blockIdx.y * gridDim.x);
+-    if (chunk >= args.batch_size || threadIdx.x != 0 || threadIdx.y != 0) {
++    const uint64_t chunk = (blockIdx.x + (blockIdx.y * gridDim.x)) * blockDim.x + threadIdx.x;
++    if (chunk >= args.batch_size || threadIdx.y != 0) {
+         return;
+     }
+ 

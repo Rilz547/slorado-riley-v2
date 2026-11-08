@@ -76,4 +76,4 @@ riley-runner-timings*
 /docs-riley/power-runs/*
 # bench harness data (traces, consoles, jsonl)
 /docs-riley/bench-runs/
-/docs-riley/bench/__pycache__/
+__pycache__/
